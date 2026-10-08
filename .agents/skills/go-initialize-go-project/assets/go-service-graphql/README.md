@@ -53,7 +53,7 @@ internal/api/v1/{graphql.go,graphql_test.go}
 
 ## 必须同步的注入点
 
-覆盖后还要改四处，否则编译或运行不完整：
+覆盖后还要改四处，否则编译、运行或文档不完整：
 
 1. `internal/api/v1/module.go` 的 `Modules()` 追加 GraphQL 模块，并按配置整体开关：
 
@@ -89,32 +89,24 @@ internal/api/v1/{graphql.go,graphql_test.go}
    `github.com/urfave/cli/v3` 记为 `// indirect`（gqlgen `generate` 命令行的依赖），
    这是代码生成器的实现细节，不是产品 CLI 能力。
 
-3. `configs/config.yaml` 与 `configs/config-dev.yaml` 增加 `graphql` 段：
+3. `configs/config.yaml` 的 `graphql.enabled` 改为 `true`，挂载查询层端点：
 
    ```yaml
    graphql:
      enabled: true
-     path: /graphql
-     playground: false      # config-dev.yaml 里为 true
-     introspection: false   # config-dev.yaml 里为 true
    ```
 
-4. `internal/config/config.go` 增加 `GraphQL` 结构体、`Config` 字段、默认值与路径校验：
+   基线的 `internal/config/config.go` 已无条件声明 `GraphQL` 结构体、`Config.GraphQL`
+   字段、`Validate()` 里的路径校验与四个默认值（`graphql.enabled=false`、
+   `graphql.path=/graphql`、`graphql.playground=false`、`graphql.introspection=false`），
+   `configs/config.yaml` 也已带完整的 `graphql` 段，因此**只改这一个布尔值**即可，
+   不需要新增任何配置结构。
 
-   ```go
-   type GraphQL struct {
-       Enabled       bool   `mapstructure:"enabled"`
-       Path          string `mapstructure:"path"`
-       Playground    bool   `mapstructure:"playground"`
-       Introspection bool   `mapstructure:"introspection"`
-   }
-   ```
+   开发档 `configs/config-dev.yaml` 已带 `graphql.playground: true` 与
+   `graphql.introspection: true`，dev 环境直接可用浏览器调试 IDE 与 introspection；
+   生产档两者必须保持 `false`，否则等于把查询层结构暴露给任意访问者。
 
-   `Validate()` 里补一条：`enabled` 为真时 `path` 必须以 `/` 开头。
-   `setDefaults()` 里补四个默认值：`graphql.enabled=true`、`graphql.path=/graphql`、
-   `graphql.playground=false`、`graphql.introspection=false`。
-
-5. 重新生成 Swagger 文档包，让 `@description` 反映只读查询能力：
+4. 重新生成 Swagger 文档包，让 `@description` 反映只读查询能力：
 
    ```bash
    go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go -o docs --parseDependency --parseInternal

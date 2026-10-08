@@ -27,10 +27,15 @@ internal/constant     跨层常量
 internal/database     数据库连接、连接池与迁移
 internal/model        实体基础结构与标识类型
 internal/repository   泛型数据访问仓储
-internal/service      用例编排层（中性脚手架为空）
+internal/service      用例编排层（中性脚手架为空，仅 .gitkeep 占位）
 internal/pkg/*        可复用基础包
 configs               基线配置与环境配置
 ```
+
+`internal/service/` 在中性脚手架里没有 Go 文件，但**目录本身是确定性的**（`scripts/harness_validation/architecture_requirements.py`
+的必需目录清单与初始化契约检查都会断言它在场），所以放了一个 `.gitkeep` 占位。
+**不要删掉它**：git 无法跟踪空目录，而 `git stash push -u` 会把未跟踪的空目录一并清掉
+（`pop` 也不会恢复），删掉后 `scripts/validate_harness.py` 会直接报「Go 脚手架缺少目录: internal/service」。
 
 ## 快速开始
 
