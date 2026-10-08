@@ -11,14 +11,21 @@ GraphQL 时**不包含**本目录的任何文件，也不包含任何指向它�
 
 ## 硬依赖：用户 API
 
-**本资产不能单独启用。** 它依赖用户 API 条件资产提供的四组符号：
+**本资产不能单独启用。** 它依赖用户 API 条件资产提供的五组符号：
 
 | 依赖 | 来源 |
 |---|---|
 | `middleware.OptionalAuth` / `middleware.Authenticator` | `internal/middleware/auth.go` |
 | `service.AuthService` / `service.AccountService` | `internal/service/{auth,account}.go` |
-| `repository.{Account,Org}Repository` | `internal/repository/{account,org}.go` |
-| `pkg/token.Manager` | `internal/pkg/token/token.go` |
+| `service.VerificationService` | `internal/service/verification.go` |
+| `repository.{Account,Org,VerificationCode}Repository` | `internal/repository/{account,org,verification_code}.go` |
+| `pkg/token.Manager` / `pkg/notify` | `internal/pkg/{token,notify}/` |
+
+最后两组里带验证码的部分，是本模块装配 `AuthService` 时顺带需要的：`NewAuthService`
+的第三个参数是 `*VerificationService`（注册与重置密码要校验验证码）。GraphQL 侧并不
+暴露注册 / 重置密码入口，这个服务对本模块而言只是「凑齐构造函数签名」，但**不能传
+`nil`** —— 否则验证码开关被打开时，`me` 查询走到的鉴权路径会空指针崩溃。装配写法与
+用户 API 资产的 `newAccountModule` 保持一致。
 
 所以合法组合只有两种：`user_api=enabled` 时 `graphql` 可选 `enabled` 或 `disabled`；
 `user_api=disabled` 时 `graphql` 必须是 `disabled`。契约校验器会拒绝其他组合。
@@ -37,7 +44,7 @@ internal/graphql/{schema.graphqls,generated.go,resolver.go,schema.resolvers.go}
 internal/graphql/{auth.go,convert.go,error.go}
 internal/graphql/gqlctx/context.go
 internal/graphql/model/models_gen.go
-internal/graphql/scalar/time.go
+internal/graphql/scalar/timestamp.go
 internal/api/v1/{graphql.go,graphql_test.go}
 ```
 
@@ -160,9 +167,12 @@ go run github.com/99designs/gqlgen generate
 
 本目录的代码已按基线约定改写，**不要**回退成源项目写法：
 
-- **时间字段是 `int64` unix 秒**：基线 `model.Base` 的 `CreatedTime` / `UpdatedTime`
-  是 `int64`，不是 `time.Time`。投影必须走 `scalar.FromUnix`（0 视为未设置，
-  序列化为 `null`），不能像源项目那样直接传 `time.Time`。
+- **时间字段是 `scalar.Timestamp`（unix 秒整数）**：基线 `model.Base` 的
+  `CreatedTime` / `UpdatedTime` 是 `model.Timestamp`（`int64` 命名类型），
+  与 `scalar.Timestamp` 底层同类型。投影必须走 `convert.go` 的
+  `gqlTimestamp` / `gqlTimestampPtr` 显式转换一次，**不要**退回 `time.Time`
+  或 RFC3339 字符串 —— 那会让同一份数据在 REST 与 GraphQL 两条链路上格式不同。
+  `schema.graphqls` 里的标量名与 `gqlgen.yml` 的映射键必须逐字一致（`Timestamp`）。
 - **账号只搬主键**：鉴权中间件只把 `int64` 主键写进 request context，因此
   `gqlctx.Meta` 存 `AccountID` 而不是账号实体，`me` 解析器按主键调
   `AccountService.LoadForAuth` 重新加载。这与 REST 的 `profile` 处理器同一条路径，

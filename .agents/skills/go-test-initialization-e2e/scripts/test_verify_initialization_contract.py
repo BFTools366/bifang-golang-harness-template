@@ -95,13 +95,21 @@ def build_minimal_project(root: Path) -> None:
         "func (c *Config) Validate() error { return nil }\n\nvar BindEnv, MergeInConfig int\n",
         encoding="utf-8",
     )
-    (root / "configs/config.yaml").write_text("app:\n  name: sample_service\n", encoding="utf-8")
+    (root / "configs/config.yaml").write_text(
+        "app:\n  name: sample_service\n\nverification:\n  enabled: true\n", encoding="utf-8"
+    )
     (root / "configs/config-dev.yaml").write_text("log:\n  level: debug\n", encoding="utf-8")
     (root / "internal/model/base.go").write_text(
         "package model\n\n"
         'type Base struct {\n\tID int64 `gorm:"primaryKey;autoIncrement:false"`\n'
-        '\tCreatedTime int64 `gorm:"autoCreateTime"`\n'
-        '\tUpdatedTime int64 `gorm:"autoUpdateTime"`\n}\n',
+        '\tCreatedTime Timestamp `gorm:"autoCreateTime"`\n'
+        '\tUpdatedTime Timestamp `gorm:"autoUpdateTime"`\n}\n',
+        encoding="utf-8",
+    )
+    (root / "internal/model/timestamp.go").write_text(
+        "package model\n\n"
+        "type Timestamp int64\n\n"
+        "func Now() Timestamp { return Timestamp(0) }\n",
         encoding="utf-8",
     )
     (root / "internal/pkg/query/query.go").write_text(
@@ -140,6 +148,24 @@ def write_graphql_assets(root: Path) -> None:
     )
     (root / "internal/api/v1/module.go").write_text(
         "package v1\n\nfunc Modules() {\n\tnewGraphQLModule(nil)\n}\n",
+        encoding="utf-8",
+    )
+    # 时间标量三处必须自洽，占位内容满足不了：schema 声明、gqlgen.yml 映射、Go 侧类型。
+    (root / "internal/graphql/schema.graphqls").write_text(
+        "scalar Timestamp\n\n"
+        "type Account {\n"
+        "  createdTime: Timestamp!\n"
+        "  updatedTime: Timestamp!\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (root / "gqlgen.yml").write_text(
+        "models:\n  Timestamp:\n    model:\n"
+        "      - sample_service/internal/graphql/scalar.Timestamp\n",
+        encoding="utf-8",
+    )
+    (root / "internal/graphql/scalar/timestamp.go").write_text(
+        "package scalar\n\ntype Timestamp int64\n\nvar _ = graphql.MarshalInt64\n",
         encoding="utf-8",
     )
 
@@ -223,6 +249,16 @@ class VerifyInitializationContractTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def disable_user_api(self) -> None:
+        """把目标树切成 user-api=disabled：删文件、关验证码开关、改事实文件。"""
+        for relative in contract.USER_API_FILES:
+            (self.root / relative).unlink()
+        (self.root / "configs" / "config.yaml").write_text(
+            "app:\n  name: sample_service\n\nverification:\n  enabled: false\n",
+            encoding="utf-8",
+        )
+        self.write_profile(user_api="disabled")
+
     def test_minimal_project_passes(self) -> None:
         """满足全部契约的最小骨架应通过检查。"""
         result = contract.check(self.root, self.root)
@@ -263,11 +299,26 @@ class VerifyInitializationContractTests(unittest.TestCase):
 
     def test_disabled_user_api_without_files_passes(self) -> None:
         """user-api=disabled 且零残留时必须通过。"""
+        self.disable_user_api()
+        result = contract.check(self.root, self.root)
+        self.assertEqual(result["userApi"], "disabled")
+
+    def test_enabled_user_api_with_closed_verification_switch_is_rejected(self) -> None:
+        """user-api=enabled 但验证码开关没打开必须阻断 —— 注入点漏改。"""
+        (self.root / "configs" / "config.yaml").write_text(
+            "app:\n  name: sample_service\n\nverification:\n  enabled: false\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(contract.ContractError, r"verification\.enabled 未打开"):
+            contract.check(self.root, self.root)
+
+    def test_disabled_user_api_with_open_verification_switch_is_rejected(self) -> None:
+        """user-api=disabled 但验证码开关仍打开必须阻断 —— 关闭路径残留。"""
         for relative in contract.USER_API_FILES:
             (self.root / relative).unlink()
         self.write_profile(user_api="disabled")
-        result = contract.check(self.root, self.root)
-        self.assertEqual(result["userApi"], "disabled")
+        with self.assertRaisesRegex(contract.ContractError, r"verification\.enabled 已打开"):
+            contract.check(self.root, self.root)
 
     def test_invalid_graphql_value_is_rejected(self) -> None:
         """graphql 非法取值必须阻断。"""
@@ -478,11 +529,80 @@ class VerifyInitializationContractTests(unittest.TestCase):
         (self.root / "internal/model/base.go").write_text(
             "package model\n\n"
             'type Base struct {\n\tID int64 `gorm:"primaryKey"`\n'
-            '\tCreatedTime int64 `gorm:"autoCreateTime"`\n'
-            '\tUpdatedTime int64 `gorm:"autoUpdateTime"`\n}\n',
+            '\tCreatedTime Timestamp `gorm:"autoCreateTime"`\n'
+            '\tUpdatedTime Timestamp `gorm:"autoUpdateTime"`\n}\n',
             encoding="utf-8",
         )
         with self.assertRaisesRegex(contract.ContractError, "autoIncrement:false"):
+            contract.check(self.root, self.root)
+
+    def test_time_field_type_regression_is_rejected(self) -> None:
+        """时间字段退回 time.Time 必须阻断。
+
+        退回后精度随驱动变化（MySQL datetime(3) 毫秒 / sqlite 纳秒），
+        同一份代码在 dev 与 prod 返回的小数秒位数不同 —— 不报错，只让客户端
+        拿到不稳定的报文。
+        """
+        (self.root / "internal/model/base.go").write_text(
+            "package model\n\n"
+            'type Base struct {\n\tID int64 `gorm:"primaryKey;autoIncrement:false"`\n'
+            '\tCreatedTime time.Time `gorm:"autoCreateTime"`\n'
+            '\tUpdatedTime time.Time `gorm:"autoUpdateTime"`\n}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(contract.ContractError, "必须声明为 model.Timestamp"):
+            contract.check(self.root, self.root)
+
+    def test_timestamp_precision_tag_is_rejected(self) -> None:
+        """自动时间戳标签带精度参数必须阻断。
+
+        字段类型是 int64 命名类型时，无参 tag 才落到 UnixSecond；
+        写成 :nano / :milli 会静默改变写入精度，且不会报错。
+        """
+        (self.root / "internal/model/base.go").write_text(
+            "package model\n\n"
+            'type Base struct {\n\tID int64 `gorm:"primaryKey;autoIncrement:false"`\n'
+            '\tCreatedTime Timestamp `gorm:"autoCreateTime:nano"`\n'
+            '\tUpdatedTime Timestamp `gorm:"autoUpdateTime"`\n}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(contract.ContractError, "不得带精度参数"):
+            contract.check(self.root, self.root)
+
+    def test_timestamp_not_named_int64_is_rejected(self) -> None:
+        """model.Timestamp 不是 int64 命名类型必须阻断。"""
+        (self.root / "internal/model/timestamp.go").write_text(
+            "package model\n\ntype Timestamp struct{}\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(contract.ContractError, "type Timestamp int64"):
+            contract.check(self.root, self.root)
+
+    def test_graphql_rfc3339_scalar_is_rejected(self) -> None:
+        """GraphQL 时间标量退回 scalar Time 必须阻断。
+
+        退回后 REST 与 GraphQL 两条链路的时间表示法不再一致，
+        客户端要为同一个字段写两个解析器。
+        """
+        write_graphql_assets(self.root)
+        self.write_profile(graphql="enabled")
+        (self.root / "internal/graphql/schema.graphqls").write_text(
+            "scalar Time\n\ntype Account {\n  createdTime: Time!\n}\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(contract.ContractError, "不得再声明 scalar Time"):
+            contract.check(self.root, self.root)
+
+    def test_graphql_timestamp_mapping_drift_is_rejected(self) -> None:
+        """gqlgen.yml 未把 Timestamp 映射到 scalar.Timestamp 必须阻断。
+
+        映射缺失不会编译报错，但运行期会把时间当普通结构体逐字段序列化。
+        """
+        write_graphql_assets(self.root)
+        self.write_profile(graphql="enabled")
+        (self.root / "gqlgen.yml").write_text(
+            "models:\n  Time:\n    model:\n      - sample_service/internal/graphql/scalar.Time\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(contract.ContractError, "models 映射必须包含 Timestamp 键"):
             contract.check(self.root, self.root)
 
     def test_desktop_capability_is_rejected(self) -> None:

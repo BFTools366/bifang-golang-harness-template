@@ -149,6 +149,47 @@ var (
 	ErrAccountUsernameTaken = New(http.StatusConflict, "account.username.taken")
 	// ErrAccountProfileLocked 表示账号资料当前不可修改。
 	ErrAccountProfileLocked = New(http.StatusConflict, "account.profile.locked")
+	// ErrPhoneTaken 表示手机号已被占用。
+	ErrPhoneTaken = New(http.StatusConflict, "account.phone.taken")
+)
+
+// 验证码错误：一次性凭据的发送、校验与消费相关。
+//
+// 这一组只在启用用户 API 条件资产后才有发送方；共享核心无条件声明它们，
+// 是为了让错误码到 i18n 词条的映射只有一处定义，条件资产不必回头改核心。
+var (
+	// ErrVerificationDisabled 表示验证码功能已关闭，但接口仍被调用。
+	ErrVerificationDisabled = New(http.StatusServiceUnavailable, "verification.disabled")
+	// ErrVerificationTargetInvalid 表示接收目标格式不正确。
+	ErrVerificationTargetInvalid = New(http.StatusBadRequest, "verification.target.invalid")
+	// ErrVerificationTargetMissing 表示按目标类型取不到对应的接收目标。
+	ErrVerificationTargetMissing = New(http.StatusBadRequest, "verification.target.missing")
+	// ErrVerificationTargetNotRegistered 表示接收目标未绑定任何账号。
+	ErrVerificationTargetNotRegistered = New(http.StatusNotFound, "verification.target.not.registered")
+	// ErrVerificationSceneUnsupported 表示不支持的验证码场景。
+	ErrVerificationSceneUnsupported = New(http.StatusBadRequest, "verification.scene.unsupported")
+	// ErrVerificationCodeRequired 表示未提供验证码。
+	ErrVerificationCodeRequired = New(http.StatusBadRequest, "verification.code.required")
+	// ErrVerificationCodeInvalid 表示验证码不正确。
+	ErrVerificationCodeInvalid = New(http.StatusBadRequest, "verification.code.invalid")
+	// ErrVerificationCodeExpired 表示验证码已过期。
+	ErrVerificationCodeExpired = New(http.StatusBadRequest, "verification.code.expired")
+	// ErrVerificationCodeConsumed 表示验证码已被使用。
+	ErrVerificationCodeConsumed = New(http.StatusBadRequest, "verification.code.consumed")
+	// ErrVerificationAttemptsExceeded 表示校验失败次数超限。
+	ErrVerificationAttemptsExceeded = New(http.StatusTooManyRequests, "verification.code.attempts.exceeded")
+	// ErrVerificationTooFrequent 表示发送过于频繁。
+	ErrVerificationTooFrequent = New(http.StatusTooManyRequests, "verification.code.too.frequent")
+	// ErrVerificationDailyLimit 表示当日发送次数超限。
+	ErrVerificationDailyLimit = New(http.StatusTooManyRequests, "verification.code.daily.limit")
+	// ErrVerificationChannelUnavailable 表示发送通道未接入。
+	ErrVerificationChannelUnavailable = New(http.StatusServiceUnavailable, "verification.channel.unavailable")
+	// ErrVerificationSendFailed 表示验证码发送失败。
+	ErrVerificationSendFailed = New(http.StatusInternalServerError, "verification.send.failed")
+	// ErrVerificationGenerateFailed 表示验证码生成失败。
+	ErrVerificationGenerateFailed = New(http.StatusInternalServerError, "verification.code.generate.failed")
+	// ErrVerificationSaveFailed 表示验证码保存失败。
+	ErrVerificationSaveFailed = New(http.StatusInternalServerError, "verification.code.save.failed")
 )
 
 // 组织错误：组织资源生命周期相关。

@@ -9,6 +9,7 @@ import (
 	"project_id/internal/graphql/gqlctx"
 	"project_id/internal/middleware"
 	"project_id/internal/pkg/contextx"
+	"project_id/internal/pkg/notify"
 	"project_id/internal/pkg/token"
 	"project_id/internal/repository"
 	"project_id/internal/service"
@@ -100,9 +101,20 @@ func newGraphQLModule(deps Dependencies) *graphqlModule {
 		deps.Config.JWT.RefreshTTL,
 	)
 
+	// 验证码服务：GraphQL 侧只借用 AuthService 做令牌校验（OptionalAuth），
+	// 注册 / 重置密码这些需要验证码的入口不在这里暴露，所以它对本模块而言
+	// 是一段「凑齐构造函数签名」的装配。仍然按 accountModule 的同一套写法装配，
+	// 而不是传 nil —— 传 nil 会让 me 字段在验证码开关意外打开时空指针崩溃。
+	verification := service.NewVerificationService(
+		repository.NewVerificationCodeRepository(deps.DB),
+		accountRepo,
+		deps.Config.Verification,
+		notify.New(deps.Config.Verification.Provider),
+	)
+
 	return &graphqlModule{
 		cfg:    deps.Config,
-		auth:   service.NewAuthService(accountRepo, orgRepo, tokens),
+		auth:   service.NewAuthService(accountRepo, orgRepo, verification, tokens),
 		server: server,
 	}
 }

@@ -25,10 +25,12 @@ resolver:
 
 # 自定义标量的 Go 类型映射。
 #
-# Time 绑定到本目录自建的 scalar.Time，而不是标准库 time.Time：
+# Timestamp（unix 秒）绑定到本目录自建的 scalar.Timestamp，而不是标准库 time.Time：
 # gqlgen 通过「类型是否实现 MarshalGQL / UnmarshalGQL」识别自定义标量的
 # 编解码方式，time.Time 两个方法都没有，直接绑定会被当成普通结构体逐字段序列化。
+#
+# 映射的键必须与 schema.graphqls 里的 scalar 名**逐字一致**，改名要同时改两处。
 models:
-  Time:
+  Timestamp:
     model:
-      - project_id/internal/graphql/scalar.Time
+      - project_id/internal/graphql/scalar.Timestamp

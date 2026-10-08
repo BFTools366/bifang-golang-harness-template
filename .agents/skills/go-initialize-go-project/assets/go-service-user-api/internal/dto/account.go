@@ -2,22 +2,26 @@
 package dto
 
 import (
-	"time"
-
 	"project_id/internal/model"
 )
 
 // Account 账号信息响应
+//
+// 三个时间字段都是 model.Timestamp（unix 秒）：
+// 命名 int64 类型在 encoding/json 里编码成**数字**，前端直接拿去做
+// new Date(sec * 1000) 即可，不需要解析字符串、也不受时区格式影响。
+// 未登录过的账号 last_login_at 为 null。
 type Account struct {
-	ID          model.ID   `json:"id"`
-	Username    string     `json:"username"`
-	Email       string     `json:"email"`
-	Nickname    string     `json:"nickname"`
-	Status      int8       `json:"status"`
-	LastLoginAt *time.Time `json:"last_login_at"`
-	LastLoginIP string     `json:"last_login_ip"`
-	CreatedTime int64      `json:"created_time"`
-	UpdatedTime int64      `json:"updated_time"`
+	ID          model.ID         `json:"id"`
+	Username    string           `json:"username"`
+	Email       string           `json:"email"`
+	Phone       *string          `json:"phone"`
+	Nickname    string           `json:"nickname"`
+	Status      int8             `json:"status"`
+	LastLoginAt *model.Timestamp `json:"last_login_at"`
+	LastLoginIP string           `json:"last_login_ip"`
+	CreatedTime model.Timestamp  `json:"created_time"`
+	UpdatedTime model.Timestamp  `json:"updated_time"`
 }
 
 // NewAccount 实体转响应对象
@@ -29,6 +33,7 @@ func NewAccount(a *model.Account) *Account {
 		ID:          a.ID,
 		Username:    a.Username,
 		Email:       a.Email,
+		Phone:       a.Phone,
 		Nickname:    a.Nickname,
 		Status:      a.Status,
 		LastLoginAt: a.LastLoginAt,
@@ -40,12 +45,12 @@ func NewAccount(a *model.Account) *Account {
 
 // Org 组织信息响应
 type Org struct {
-	ID          model.ID `json:"id"`
-	Name        string   `json:"name"`
-	OwnerID     model.ID `json:"owner_id"`
-	IsDefault   bool     `json:"is_default"`
-	CreatedTime int64    `json:"created_time"`
-	UpdatedTime int64    `json:"updated_time"`
+	ID          model.ID        `json:"id"`
+	Name        string          `json:"name"`
+	OwnerID     model.ID        `json:"owner_id"`
+	IsDefault   bool            `json:"is_default"`
+	CreatedTime model.Timestamp `json:"created_time"`
+	UpdatedTime model.Timestamp `json:"updated_time"`
 }
 
 // NewOrg 实体转响应对象，实体为 nil 时返回 nil

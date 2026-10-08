@@ -7,15 +7,15 @@ import (
 )
 
 type Account struct {
-	ID            string       `json:"id"`
-	Username      string       `json:"username"`
-	Email         string       `json:"email"`
-	Nickname      string       `json:"nickname"`
-	Status        int          `json:"status"`
-	LastLoginIP   string       `json:"lastLoginIp"`
-	LastLoginTime *scalar.Time `json:"lastLoginTime,omitempty"`
-	CreatedTime   scalar.Time  `json:"createdTime"`
-	UpdatedTime   scalar.Time  `json:"updatedTime"`
+	ID            string            `json:"id"`
+	Username      string            `json:"username"`
+	Email         string            `json:"email"`
+	Nickname      string            `json:"nickname"`
+	Status        int               `json:"status"`
+	LastLoginIP   string            `json:"lastLoginIp"`
+	LastLoginTime *scalar.Timestamp `json:"lastLoginTime,omitempty"`
+	CreatedTime   scalar.Timestamp  `json:"createdTime"`
+	UpdatedTime   scalar.Timestamp  `json:"updatedTime"`
 }
 
 type AccountDetail struct {
@@ -31,11 +31,11 @@ type Health struct {
 }
 
 type Org struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	IsDefault   bool        `json:"isDefault"`
-	CreatedTime scalar.Time `json:"createdTime"`
-	UpdatedTime scalar.Time `json:"updatedTime"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	IsDefault   bool             `json:"isDefault"`
+	CreatedTime scalar.Timestamp `json:"createdTime"`
+	UpdatedTime scalar.Timestamp `json:"updatedTime"`
 }
 
 type Query struct {

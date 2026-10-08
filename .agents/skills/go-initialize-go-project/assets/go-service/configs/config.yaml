@@ -78,6 +78,27 @@ graphql:
   # 是否允许 introspection 查询；生产应关闭。
   introspection: false
 
+verification:
+  # 注册等流程是否强制校验验证码。基线不含用户模块，本开关只在启用
+  # 用户 API 条件资产后生效；未启用时该值没有读取方，不产生副作用。
+  enabled: false
+  # 模拟模式：不调用任何真实发送通道，生成的验证码直接随响应返回。
+  # 生产环境禁止开启，config.Validate 会在启用状态下直接报错。
+  mock: false
+  # 验证码位数。
+  code_length: 6
+  # 有效期；太短用户来不及输入，太长等于给爆破留时间。
+  ttl: 5m
+  # 同一目标两次发送的最小间隔，必须小于 ttl。
+  resend_interval: 60s
+  # 单个验证码允许的校验失败次数，超过即作废。
+  max_attempts: 5
+  # 同一目标 24 小时内的发送次数上限。
+  daily_limit: 10
+  # 发送通道：留空表示未接入真实通道（非 mock 发送会返回 503）。
+  # 已预留 smtp / http 两个名字，实现对应的发送通道后即可启用。
+  provider: ""
+
 log:
   # 日志级别。
   level: info

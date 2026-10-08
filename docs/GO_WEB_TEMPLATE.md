@@ -84,7 +84,7 @@ import "order_service/internal/repository"
 │   │   ├── error.go                错误呈现与 panic 恢复
 │   │   ├── gqlctx/                 请求级元信息桥接
 │   │   ├── model/                  GraphQL 类型投影（生成）
-│   │   └── scalar/                 Time 标量
+│   │   └── scalar/                 Timestamp 标量（unix 秒）
 │   ├── middleware/                 适配器：request_id / locale / logger / error_handler / cors / ratelimit / auth
 │   ├── model/                      core：实体 + 公共数据结构
 │   ├── repository/                 core：泛型 CRUD 基类 + 表专属方法
@@ -137,22 +137,34 @@ cmd → bootstrap → api → api/v1 → {业务模块} → service → reposito
 
 账号与认证能力**不进入中性基线**，而是作为 `conditional` 资产按初始化选择注入：
 
-- `user_api` 取值为 `enabled`（默认）时，把 `.agents/skills/go-initialize-go-project/assets/go-service-user-api/` 覆盖到项目根，并同步三处注入：`AllModels()` 追加 `&Account{}` 与 `&Org{}`、`Modules()` 追加 `newAccountModule(deps)`、`go.mod` 增加 `github.com/golang-jwt/jwt/v5`。
-- 取值为 `disabled` 时不复制任何文件、不做任何注入、不引入 jwt 依赖；关闭路径天然零残留，不采用「先复制再删除」。
+- `user_api` 取值为 `enabled`（默认）时，把 `.agents/skills/go-initialize-go-project/assets/go-service-user-api/` 覆盖到项目根，并同步四处注入：`AllModels()` 追加 `&Account{}`、`&Org{}` 与 `&VerificationCode{}`、`Modules()` 追加 `newAccountModule(deps)`、`go.mod` 增加 `github.com/golang-jwt/jwt/v5`、`configs/config.yaml` 的 `verification.enabled` 改为 `true`。
+- 取值为 `disabled` 时不复制任何文件、不做任何注入、不引入 jwt 依赖、不打开验证码开关；关闭路径天然零残留，不采用「先复制再删除」。
 - 事实来源是 `.harness/go-service-profile.json` 的 `user-api` 键，后续任务只读消费，不重新推断。
 
 暴露的接口：
 
 | 方法 | 路径 | 鉴权 |
 |---|---|---|
+| POST | `/api/v1/auth/verification-code` | 否 |
 | POST | `/api/v1/auth/register` | 否 |
 | POST | `/api/v1/auth/login` | 否 |
 | POST | `/api/v1/auth/refresh` | 否 |
+| POST | `/api/v1/auth/password/reset` | 否 |
 | POST | `/api/v1/auth/logout` | 是 |
 | GET | `/api/v1/auth/profile` | 是 |
 | PUT | `/api/v1/auth/password` | 是 |
 
 鉴权只认 `Authorization: Bearer <token>`，不接受自定义头名、裸令牌或 `?token=` 查询参数。令牌管理器由账号模块按 `config.JWT` 自行创建，因此共享核心的 `Dependencies` 不需要认识用户模块类型；鉴权中间件只把账号 `int64` 主键写进 request context，账号实体由处理器按主键重新加载。
+
+### 验证码机制
+
+验证码是**注册**与**重置密码**共用的凭证，落在 `verification_codes` 表，不依赖 Redis 等外部中间件：
+
+- **场景注册表**：场景（用途）与接收目标（邮箱 / 手机号）正交，差异集中在 `internal/service/verification_scene.go` 的一张表里声明，而不是散落到 `dto` 的 binding tag 或 `Send`/`Verify` 的分支里。当前两个场景：`register`（不要求目标已注册，`scene` 留空时的默认值）与 `reset_password`（要求目标已注册）。新增场景 = 注册表加一行 + `model` 加一个常量 + 实现对应业务流程；未知场景返回可读的 `verification.scene.unsupported`，而不是在参数绑定阶段被拒成 400。
+- **校验与消费分离**：`Verify` 只校验并返回记录主键，`Consume` 由调用方在业务事务里执行 —— 查重失败、建账号失败、改密失败都不会吃掉用户刚收到的码，用户能拿着同一个码重试；并发抢同一个码靠 `WHERE status = 待用` 的 `RowsAffected` 判定归属。
+- **配置桩在基线**：`config.Verification` 结构与默认值、`configs/*.yaml` 的 `verification` 段无条件存在，默认 `enabled: false`；启用条件资产只需把 `configs/config.yaml` 的 `enabled` 改成 `true`。细粒度校验（含「生产禁止 mock」「发送通道白名单」）只在 `enabled` 为真时执行，因此关闭路径不会被它拦下。
+- **五道防线**：有效期、一次性消费、失败次数上限、重发间隔、每日上限同时生效；`crypto/rand` 生成、只存 `sha256(target:code)`、恒定时间比对、重发时同事务作废旧码。哈希**不是**主要防线 —— 6 位数字只有 10^6 种取值，拿到哈希后离线爆破是瞬间的事，它的作用只是让数据库导出、慢查询日志、备份文件拿不到可直接使用的明文。
+- **发送通道是接口**：`internal/pkg/notify` 只定义 `Sender`，当前所有 provider 都落到 `Unconfigured`，非 mock 发送显式返回 503 而不是静默丢弃。接入真实通道时实现 `Sender` 并在 `notify.New` 里注册，service 与 api 层不用改。
 
 ## 3.2 GraphQL 查询层条件资产
 
@@ -175,7 +187,7 @@ GraphQL 是**只读查询层**，与用户 API 一样属于 `conditional` 资产
 - **只提供 Query，不提供 Mutation。** 写操作需要事务边界、幂等与鉴权的一致语义，而 GraphQL 的业务错误一律返回 HTTP 200，失败只能从 `errors[]` 里看——对登录这类需要明确状态码的场景是净损失。查询则相反：客户端按需选字段、一次取多个资源。
 - **响应体不套用 REST 信封。** `{data, errors}` 是 GraphQL 规范决定的形状，`{model, data, request_id}` 不适用于它。
 - **GraphQL 类型是独立投影**（`internal/graphql/model`），不复用 `model.Account`；`convert.go` 是一份白名单，实体新增字段不会自动对外暴露。
-- **时间字段走 `scalar.FromUnix`。** `model.Base` 的 `CreatedTime`/`UpdatedTime` 是 int64 unix 秒而不是 `time.Time`，`0` 视为未设置并序列化为 `null`。
+- **时间字段走 `scalar.Timestamp`（unix 秒整数）。** 与 REST 响应、数据库列同一个表示法，客户端不必为两条链路各写一个解析器。`model.Timestamp` 与 `scalar.Timestamp` 底层都是 `int64`，投影时在 `convert.go` 的 `gqlTimestamp` 里显式转换一次，避免时间在 GraphQL 层重新变成 `time.Time`。不用内置的 `Int` 是因为规范里它是 32 位，unix 秒会在 2038 年溢出。
 - **账号只搬主键。** `gqlctx.Meta` 存 `AccountID`，`me` 解析器按主键调 `AccountService.LoadForAuth` 重新加载——与 REST 的 `profile` 处理器同一条路径。
 - **`internal/graphql` 归入 adapter 分层**（与 `internal/api` 同级）。core 依赖它会被 core-first 门禁判为反向依赖；`service` 引入 gqlgen 会被判接口框架越界。
 - **`generated.go` 不参与行数门禁**：gqlgen 生成物，与 `docs/docs.go` 同属机械生成路径；`model/models_gen.go` 由 `_gen.go` 后缀覆盖。
@@ -315,16 +327,19 @@ items, total, err := repo.Page(ctx, &query.Page{Current: 1, Size: 10}, scopes...
 
 ```go
 type Base struct {
-    ID          ID                    `gorm:"primaryKey;autoIncrement:false;comment:主键（雪花算法）" json:"id"`
-    CreatedTime time.Time             `gorm:"autoCreateTime;comment:创建时间" json:"created_time"`
-    UpdatedTime time.Time             `gorm:"autoUpdateTime;comment:更新时间" json:"updated_time"`
-    DeletedTime soft_delete.DeletedAt `gorm:"index;comment:软删除时间戳（unix 秒，0 表示未删除）" json:"-"`
+    ID          ID                    `gorm:"primaryKey;autoIncrement:false;column:id" json:"id"`
+    CreatedTime Timestamp             `gorm:"autoCreateTime;column:created_time" json:"created_time"`
+    UpdatedTime Timestamp             `gorm:"autoUpdateTime;column:updated_time" json:"updated_time"`
+    DeletedTime soft_delete.DeletedAt `gorm:"column:deleted_time;softDelete:unix" json:"-"`
 }
 ```
 
 规则：
 
 - **时间字段统一 `xxx_time` 命名，且必须显式写 tag。** GORM 的自动时间戳按字段名识别，只认 `CreatedAt` / `UpdatedAt`；本基线用 `CreatedTime` / `UpdatedTime`，靠 `autoCreateTime` / `autoUpdateTime` 兜住。少写 tag 不会报错，字段会静默保持零值。
+- **时间一律用 `model.Timestamp`（`int64` 命名类型，unix 秒），不用 `time.Time`。** 数据库列、REST 响应、GraphQL 响应三处都是同一个整数。用 `time.Time` 时精度由驱动决定 —— MySQL 建 `datetime(3)`（毫秒）、sqlite 走 GORM 默认的 `time.Now().Local()`（纳秒），序列化又都是 RFC3339Nano 原样输出，结果是同一份代码在 dev 返回 7 位小数秒、prod 返回 3 位，客户端拿到的字符串位数不固定。`Timestamp` 提供 `Now` / `Time` / `IsZero` / `Before` / `After` / `Equal` / `Sub` / `Add` 等辅助方法，比较与加减优先用它们，不要来回转 `time.Time`。
+- **`autoCreateTime` / `autoUpdateTime` 故意不带参数。** 字段类型是 `int64` 的命名类型，GORM 判定 `DataType = Int`，无参即落到 UnixSecond（写入时执行 `.Unix()`）。写成 `autoCreateTime:nano` 或 `:milli` 会立刻破坏「全项目用秒」的约定，且不报错。
+- 秒级精度下同一秒内的先后顺序无法区分，需要严格排序的场景用 `ORDER BY created_time DESC, id DESC` 兜底 —— 雪花 ID 在同一秒内仍单调递增。
 - **软删除用 `gorm.io/plugin/soft_delete`，`DeletedTime` 存 unix 秒，`0` 表示未删除。** GORM 自动追加 `WHERE deleted_time = 0`，删除自动改写为 `UPDATE`。
 - 不用可空时间戳（`gorm.DeletedAt`）：`NULL` 在唯一索引中互不冲突，会让 `(唯一列, deleted_time)` 这类复合唯一索引形同虚设。用 `0` 才能让复合唯一索引真正生效。
 - 物理删除用 `db.Unscoped().Delete(...)`，必须在仓储内封装并注明原因。

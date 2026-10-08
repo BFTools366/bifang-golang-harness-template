@@ -94,14 +94,25 @@ type Entity interface {
 }
 
 // Base 是持久化实体的公共字段集合。
+//
+// 三个时间字段**统一以 unix 秒存储与下发**，类型分别是 Timestamp（自定义
+// int64）与 soft_delete.DeletedAt（也是 int64 秒）。理由与精度取舍见
+// timestamp.go 的 Timestamp 文档；一句话：避免 time.Time 在不同驱动下
+// 精度不一致（MySQL datetime(3) 毫秒 / sqlite 纳秒）导致同一个接口
+// 在 dev 与 prod 返回位数不同的小数秒。
+//
+// autoCreateTime / autoUpdateTime **故意不带参数**：字段类型是 int64 的
+// 命名类型，GORM 判定 DataType = Int，无参即落到 UnixSecond
+// （gorm/schema/field.go:300、:312），写入时执行 data.Unix()。
+// 改成 autoCreateTime:nano 或 :milli 会立刻破坏「全项目用秒」的约定。
 type Base struct {
 	// ID 是雪花主键；autoIncrement 必须显式关闭。
 	ID ID `gorm:"primaryKey;autoIncrement:false;column:id" json:"id"`
-	// CreatedTime 是创建时间戳。
-	CreatedTime int64 `gorm:"autoCreateTime;column:created_time" json:"created_time"`
-	// UpdatedTime 是更新时间戳。
-	UpdatedTime int64 `gorm:"autoUpdateTime;column:updated_time" json:"updated_time"`
-	// DeletedTime 是软删除时间戳，0 表示未删除。
+	// CreatedTime 是创建时间（unix 秒）。
+	CreatedTime Timestamp `gorm:"autoCreateTime;column:created_time" json:"created_time"`
+	// UpdatedTime 是更新时间（unix 秒）。
+	UpdatedTime Timestamp `gorm:"autoUpdateTime;column:updated_time" json:"updated_time"`
+	// DeletedTime 是软删除时间戳（unix 秒），0 表示未删除。
 	DeletedTime soft_delete.DeletedAt `gorm:"column:deleted_time;softDelete:unix" json:"-"`
 }
 

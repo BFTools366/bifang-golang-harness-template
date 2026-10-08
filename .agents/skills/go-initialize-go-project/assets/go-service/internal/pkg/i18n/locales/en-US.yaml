@@ -32,9 +32,27 @@ account.password.weak: Password is too weak
 account.password.mismatch: Current password does not match
 account.username.taken: Username is already taken
 account.profile.locked: Account profile cannot be modified now
+account.phone.taken: Phone number is already taken
 
 org.not.found: Organization does not exist
 org.member.exists: Member already belongs to the organization
+
+verification.disabled: Verification code is not enabled
+verification.target.invalid: Invalid verification target format
+verification.target.missing: Missing verification target for this type
+verification.target.not.registered: This target has not been registered
+verification.scene.unsupported: Unsupported verification scene
+verification.code.required: Please request a verification code first
+verification.code.invalid: Incorrect verification code
+verification.code.expired: Verification code has expired, please request a new one
+verification.code.consumed: Verification code has already been used, please request a new one
+verification.code.attempts.exceeded: Too many incorrect attempts, please request a new code
+verification.code.too.frequent: Verification code sent too frequently, please try again later
+verification.code.daily.limit: Daily verification code limit reached
+verification.channel.unavailable: Verification channel is not configured, please contact the administrator
+verification.send.failed: Failed to send verification code
+verification.code.generate.failed: Failed to generate verification code
+verification.code.save.failed: Failed to save verification code
 
 validate.required: This field is required
 validate.username: Invalid username format

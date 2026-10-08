@@ -21,8 +21,14 @@
 #
 #   go run github.com/99designs/gqlgen generate
 
-# RFC3339 时间标量（Go 侧对应 internal/graphql/scalar.Time）
-scalar Time
+# unix 秒时间戳标量（Go 侧对应 internal/graphql/scalar.Timestamp）。
+#
+# 取值是**整数**，例如 1759895165，不是 RFC3339 字符串。
+# 与 REST 响应、数据库列保持同一个表示法，客户端不需要为两条链路各写一个解析器。
+#
+# 为什么不直接用内置的 Int：规范的 Int 是 32 位，unix 秒会在 2038 年溢出，
+# 所以这里用 Int64 语义的自定义标量。
+scalar Timestamp
 
 # 账号。
 #
@@ -36,9 +42,9 @@ type Account {
   nickname: String!
   status: Int!
   lastLoginIp: String!
-  lastLoginTime: Time
-  createdTime: Time!
-  updatedTime: Time!
+  lastLoginTime: Timestamp
+  createdTime: Timestamp!
+  updatedTime: Timestamp!
 }
 
 # 组织
@@ -46,8 +52,8 @@ type Org {
   id: ID!
   name: String!
   isDefault: Boolean!
-  createdTime: Time!
-  updatedTime: Time!
+  createdTime: Timestamp!
+  updatedTime: Timestamp!
 }
 
 # 当前账号详情：账号 + 其默认组织。

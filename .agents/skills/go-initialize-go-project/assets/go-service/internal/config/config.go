@@ -41,6 +41,11 @@ type Config struct {
 	// 基线不含 GraphQL 模块，本段只在启用 GraphQL 条件资产后生效；
 	// 未启用时字段存在但没有任何读取方，不产生副作用。
 	GraphQL GraphQL
+	// Verification 是验证码相关配置。
+	//
+	// 基线不含用户模块，本段只在启用用户 API 条件资产后生效；
+	// 未启用时默认关闭，字段存在但没有任何读取方，不产生副作用。
+	Verification Verification
 	// Log 是日志相关配置。
 	Log Log
 	// RateLimit 是限流相关配置。
@@ -154,6 +159,42 @@ type GraphQL struct {
 	Playground bool `mapstructure:"playground"`
 	// Introspection 表示是否允许 introspection 查询；生产建议关闭。
 	Introspection bool `mapstructure:"introspection"`
+}
+
+// Verification 描述验证码参数。
+//
+// 默认关闭：基线不含用户模块，本段只在启用用户 API 条件资产后才有读取方。
+// 启用后 mock 默认打开，让前后端在没接入短信/邮件通道时就能把注册链路跑通；
+// **生产环境禁止 mock**（见 Validate），mock 会把验证码回显给调用方，
+// 等于验证环节完全失效。
+type Verification struct {
+	// Enabled 表示注册等流程是否强制校验验证码。
+	Enabled bool `mapstructure:"enabled"`
+	// Mock 表示是否使用模拟通道（不真实发送，验证码随响应返回）。
+	Mock bool `mapstructure:"mock"`
+	// CodeLength 是验证码位数。
+	CodeLength int `mapstructure:"code_length"`
+	// TTL 是验证码有效期。
+	TTL time.Duration `mapstructure:"ttl"`
+	// ResendInterval 是同一目标两次发送之间的最小间隔，必须小于 TTL。
+	ResendInterval time.Duration `mapstructure:"resend_interval"`
+	// MaxAttempts 是单个验证码允许的校验失败次数，超过即作废。
+	MaxAttempts int `mapstructure:"max_attempts"`
+	// DailyLimit 是同一目标 24 小时内的发送次数上限。
+	DailyLimit int `mapstructure:"daily_limit"`
+	// Provider 是发送通道名，留空表示未接入真实通道。
+	Provider string `mapstructure:"provider"`
+}
+
+// verificationProviders 是验证码发送通道白名单。
+//
+// 与用户 API 条件资产里 notify.Supported 的取值保持一致。共享核心不能
+// import 条件资产的包（用户 API 关闭时那条依赖不存在），所以这里独立声明
+// 一份，用启动期校验拦下拼错的通道名。
+var verificationProviders = map[string]struct{}{
+	"":     {},
+	"smtp": {},
+	"http": {},
 }
 
 // Log 描述日志参数。
@@ -323,6 +364,45 @@ func (c *Config) Validate() error {
 	if c.GraphQL.Enabled && !strings.HasPrefix(strings.TrimSpace(c.GraphQL.Path), "/") {
 		return fmt.Errorf("config: graphql.path 必须以 / 开头，当前：%q", c.GraphQL.Path)
 	}
+	if err := c.validateVerification(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateVerification 校验验证码配置。
+//
+// 只在启用时做细粒度校验：条件资产未落地时这些值没有读取方，
+// 用它们阻断启动属于越界。基线默认关闭，因此默认路径永远是放行的。
+func (c *Config) validateVerification() error {
+	v := c.Verification
+	if !v.Enabled {
+		return nil
+	}
+	if v.Mock && c.App.IsProd() {
+		return errors.New("config: verification.mock 在生产环境必须为 false（mock 会把验证码回显给调用方）")
+	}
+	if _, ok := verificationProviders[strings.ToLower(strings.TrimSpace(v.Provider))]; !ok {
+		return fmt.Errorf("config: verification.provider 不支持 %q（可选：留空表示未接入 / smtp / http）", v.Provider)
+	}
+	if v.CodeLength < 4 || v.CodeLength > 10 {
+		return fmt.Errorf("config: verification.code_length 需在 4 到 10 之间，当前：%d", v.CodeLength)
+	}
+	if v.TTL <= 0 {
+		return errors.New("config: verification.ttl 必须大于 0")
+	}
+	if v.ResendInterval < 0 {
+		return errors.New("config: verification.resend_interval 不能为负")
+	}
+	if v.ResendInterval >= v.TTL {
+		return fmt.Errorf("config: verification.resend_interval (%s) 必须小于 ttl (%s)", v.ResendInterval, v.TTL)
+	}
+	if v.MaxAttempts <= 0 {
+		return errors.New("config: verification.max_attempts 必须大于 0")
+	}
+	if v.DailyLimit <= 0 {
+		return errors.New("config: verification.daily_limit 必须大于 0")
+	}
 	return nil
 }
 
@@ -393,6 +473,17 @@ func setDefaults(instance *viper.Viper) {
 	// 需要时由 config-dev.yaml 打开，而不是默认放开再由生产去关。
 	instance.SetDefault("graphql.playground", false)
 	instance.SetDefault("graphql.introspection", false)
+
+	// Verification 默认关闭：基线不含用户模块，启用条件资产后由 configs/config.yaml 打开。
+	// mock 同时默认关闭，保证「未启用」这条路径在任意环境下都不会被启动校验拦下。
+	instance.SetDefault("verification.enabled", false)
+	instance.SetDefault("verification.mock", false)
+	instance.SetDefault("verification.code_length", 6)
+	instance.SetDefault("verification.ttl", 5*time.Minute)
+	instance.SetDefault("verification.resend_interval", time.Minute)
+	instance.SetDefault("verification.max_attempts", 5)
+	instance.SetDefault("verification.daily_limit", 10)
+	instance.SetDefault("verification.provider", "")
 
 	instance.SetDefault("log.level", "info")
 	instance.SetDefault("log.format", "text")

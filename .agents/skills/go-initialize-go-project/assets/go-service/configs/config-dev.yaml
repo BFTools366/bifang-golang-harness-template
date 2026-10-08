@@ -28,3 +28,10 @@ graphql:
   # 仅在启用 GraphQL 条件资产后生效。
   playground: true
   introspection: true
+
+verification:
+  # 开发环境直接用模拟通道：不接任何发送通道，
+  # 调用 POST /api/v1/auth/verification-code 时验证码直接写在响应里。
+  # 想验证「非 mock」的行为（发送时返回 503）就把它改成 false。
+  # 仅在启用用户 API 条件资产后生效。
+  mock: true

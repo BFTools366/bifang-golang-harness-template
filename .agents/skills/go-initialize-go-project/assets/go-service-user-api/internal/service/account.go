@@ -56,11 +56,9 @@ func (s *AccountService) ChangePassword(ctx context.Context, id model.ID, oldPas
 	if err != nil {
 		return apperr.ErrInternal
 	}
-	if err := s.accounts.UpdateFields(ctx, id, map[string]any{"password": hashed}); err != nil {
-		return apperr.ErrInternal
-	}
-	// 改密后旧令牌必须立刻失效，否则密码泄露后改密形同虚设
-	if err := s.accounts.BumpTokenVersion(ctx, id); err != nil {
+	// 改密与吊销旧令牌在同一条 UPDATE 里完成，避免中间窗口 ——
+	// 密码泄露后改密却留着旧令牌可用，等于改密没生效。
+	if err := s.accounts.UpdatePassword(ctx, id, hashed); err != nil {
 		return apperr.ErrInternal
 	}
 	return nil

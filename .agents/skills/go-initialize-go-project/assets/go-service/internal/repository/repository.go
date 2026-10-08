@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -139,19 +140,33 @@ func (r *Repository[T]) TransactionDB(ctx context.Context, fn func(tx *gorm.DB) 
 	return r.db.WithContext(ctx).Transaction(fn)
 }
 
-// GetByID 按主键查询实体，不存在时返回 gorm.ErrRecordNotFound。
+// GetByID 按主键查询实体，不存在时返回 (nil, nil)。
+//
+// 「不存在」是正常的业务分支而不是错误：登录、刷新令牌、鉴权加载账号、
+// 按接收目标定位账号都要把它翻译成各自的可读错误码（401 / 404），
+// 若在这里把 gorm.ErrRecordNotFound 原样抛出，调用方漏写一次判断就会
+// 把「账号不存在」误报成 500 内部错误。真正的查询失败仍然原样返回。
 func (r *Repository[T]) GetByID(ctx context.Context, id model.ID) (*T, error) {
 	var entity T
 	if err := r.session(ctx).Where("id = ?", id).Take(&entity).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &entity, nil
 }
 
-// Get 按条件查询单个实体，不存在时返回 gorm.ErrRecordNotFound。
+// Get 按条件查询单个实体，不存在时返回 (nil, nil)。
+//
+// 与 GetByID 同一约定：调用方按「先判空、再给出业务错误」组织逻辑，
+// 因此「查不到」必须与「查询出错」区分开。
 func (r *Repository[T]) Get(ctx context.Context, scopes ...Scope) (*T, error) {
 	var entity T
 	if err := r.applyScopes(r.session(ctx), scopes).Take(&entity).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &entity, nil

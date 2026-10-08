@@ -28,18 +28,31 @@ ALLOWED_GRAPHQL = ["enabled", "disabled"]
 USER_API_FILES = [
     "internal/dto/account.go",
     "internal/dto/auth.go",
+    "internal/dto/verification.go",
     "internal/model/account.go",
     "internal/model/org.go",
+    "internal/model/verification_code.go",
     "internal/repository/account.go",
     "internal/repository/org.go",
+    "internal/repository/verification_code.go",
     "internal/service/account.go",
     "internal/service/auth.go",
     "internal/service/org.go",
+    "internal/service/verification.go",
+    "internal/service/verification_scene.go",
     "internal/api/v1/account.go",
     "internal/middleware/auth.go",
     "internal/pkg/token/token.go",
     "internal/pkg/hash/password.go",
+    "internal/pkg/verifycode/verifycode.go",
+    "internal/pkg/notify/notify.go",
 ]
+
+# 验证码能力与 user-api 取值必须一致的配置开关。
+#
+# 开关在基线里无条件声明（默认关闭），启用条件资产时才由初始化流程打开；
+# 关闭路径如果残留一个打开的开关，配置校验会开始对一组没有读取方的参数生效。
+VERIFICATION_SWITCH = ("verification", "enabled")
 
 # GraphQL 条件资产的标志性文件；enabled 时必须全部在场，disabled 时必须全部缺席。
 #
@@ -55,7 +68,7 @@ GRAPHQL_FILES = [
     "internal/graphql/auth.go",
     "internal/graphql/convert.go",
     "internal/graphql/error.go",
-    "internal/graphql/scalar/time.go",
+    "internal/graphql/scalar/timestamp.go",
     "internal/graphql/gqlctx/context.go",
     "internal/graphql/model/models_gen.go",
     "internal/api/v1/graphql.go",
@@ -79,6 +92,7 @@ REQUIRED_FILES = [
     "internal/constant/constant.go",
     "internal/database/database.go",
     "internal/model/base.go",
+    "internal/model/timestamp.go",
     "internal/model/models.go",
     "internal/repository/repository.go",
     "internal/middleware/middleware.go",
@@ -400,6 +414,27 @@ def require_snowflake_primary_key(root: Path) -> None:
     if "autoCreateTime" not in text or "autoUpdateTime" not in text:
         raise ContractError("时间字段必须显式声明 autoCreateTime 与 autoUpdateTime")
 
+    # 时间口径：全项目只有一种表示法 —— unix 秒整数（model.Timestamp）。
+    # 两条断言都是防「静默破坏」：类型退回 time.Time 会让精度随驱动变化，
+    # tag 带上 :nano / :milli 会让写入精度与列语义不一致，两者都不会报错。
+    for field in ("CreatedTime", "UpdatedTime"):
+        if not re.search(rf"\b{field}\s+Timestamp\b", text):
+            raise ContractError(f"{field} 必须声明为 model.Timestamp（unix 秒），不得退回 time.Time")
+    # 先剥掉行注释再查 tag：文档里恰恰会拿 autoCreateTime:nano 当反例讲解，
+    # 不剥注释会把「解释为什么不能这么写」误判成「这么写了」。
+    code = re.sub(r"//[^\n]*", "", text).replace(" ", "")
+    for precision in ("autoCreateTime:nano", "autoCreateTime:milli",
+                      "autoUpdateTime:nano", "autoUpdateTime:milli"):
+        if precision in code:
+            raise ContractError(f"自动时间戳标签不得带精度参数（发现 {precision}）：unix 秒约定要求无参")
+
+    # 类型本身必须存在且是 int64 命名类型，否则上面的断言只是同义反复。
+    timestamp = read_text(root / "internal/model/timestamp.go")
+    if not re.search(r"type\s+Timestamp\s+int64\b", timestamp):
+        raise ContractError("internal/model/timestamp.go 必须声明 type Timestamp int64")
+    if "func Now() Timestamp" not in timestamp:
+        raise ContractError("model.Timestamp 必须提供 Now() 作为唯一的取当前时刻入口")
+
 
 def require_query_constants(root: Path) -> None:
     """校验分页契约常量与排序列名白名单。"""
@@ -549,11 +584,37 @@ def require_swagger(root: Path) -> None:
     require_swagger_covers_routes(root, docs_text, main)
 
 
+def read_config_bool(path: Path, section: str, key: str) -> bool | None:
+    """读取 YAML 配置里 `section.key` 的布尔值，未出现返回 None。
+
+    只解析「顶层段 + 缩进键」这一固定形状，够用且不必为此引入 YAML 依赖。
+    行内注释先剥离，避免注释里的冒号被当成键值分隔符。
+    """
+    if not path.is_file():
+        return None
+    current = ""
+    for raw in read_text(path).splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not line.startswith((" ", "\t")):
+            current = line.strip().rstrip(":")
+            continue
+        if current != section:
+            continue
+        match = re.match(r"^\s+([A-Za-z0-9_]+)\s*:\s*(\S+)\s*$", line)
+        if match and match.group(1) == key:
+            return match.group(2).strip().lower() == "true"
+    return None
+
+
 def require_user_api(root: Path, profile: dict[str, object]) -> None:
     """按 user-api 取值校验用户模块在场或零残留。
 
     条件资产是「选是才复制」，因此关闭路径必须是文件与引用都不存在，
     而不是复制后删除——后者会留下 AllModels/Modules 之类的悬空引用。
+    验证码开关同理：它随条件资产一起打开，也必须随条件资产一起关闭，
+    否则关闭路径会带着一个没有读取方的开关进入后续维护。
     """
 
     enabled = profile["user-api"] == "enabled"
@@ -563,6 +624,15 @@ def require_user_api(root: Path, profile: dict[str, object]) -> None:
         raise ContractError("user-api=enabled 但缺少用户模块文件：" + "、".join(missing))
     if not enabled and present:
         raise ContractError("user-api=disabled 但存在用户模块文件：" + "、".join(present))
+
+    section, key = VERIFICATION_SWITCH
+    switch = read_config_bool(root / "configs/config.yaml", section, key)
+    if switch is None:
+        raise ContractError(f"configs/config.yaml 缺少 {section}.{key} 开关")
+    if enabled and not switch:
+        raise ContractError(f"user-api=enabled 但 configs/config.yaml 的 {section}.{key} 未打开")
+    if not enabled and switch:
+        raise ContractError(f"user-api=disabled 但 configs/config.yaml 的 {section}.{key} 已打开")
 
 
 def mangle_go_path(path: str) -> str:
@@ -611,6 +681,39 @@ def require_graphql(root: Path, profile: dict[str, object], module: str) -> None
 
     if enabled:
         require_generated_graphql_identity(root, module)
+        require_graphql_timestamp_scalar(root)
+
+
+def require_graphql_timestamp_scalar(root: Path) -> None:
+    """校验时间标量三处一致：schema 声明、gqlgen.yml 映射、Go 侧类型。
+
+    三处任一处改名而另两处没跟上，症状不同且都不易发现：Go 侧不匹配会在编译期
+    报错（还算好），映射缺失则会在运行期把时间当普通结构体逐字段序列化，
+    输出成 {"wall":...,"ext":...} 这种东西 —— 不报错，只出错数据。
+
+    三处都先剥掉注释再查：这几份文件恰恰会用注释解释「为什么是 Timestamp」，
+    不剥注释会让「解释约定」被当成「满足约定」。
+    """
+    schema = re.sub(r"#[^\n]*", "", read_text(root / "internal/graphql/schema.graphqls"))
+    if re.search(r"^scalar\s+Time\s*$", schema, re.MULTILINE):
+        raise ContractError("schema.graphqls 不得再声明 scalar Time：时间标量已统一为 Timestamp")
+    if not re.search(r"^scalar\s+Timestamp\s*$", schema, re.MULTILINE):
+        raise ContractError("schema.graphqls 必须声明 scalar Timestamp")
+    account_block = schema.split("type Account", 1)
+    if len(account_block) < 2 or "Timestamp" not in account_block[1]:
+        raise ContractError("Account 类型的时间字段必须使用 Timestamp 标量")
+
+    gqlgen = re.sub(r"#[^\n]*", "", read_text(root / "gqlgen.yml"))
+    if not re.search(r"^\s+Timestamp:\s*$", gqlgen, re.MULTILINE):
+        raise ContractError("gqlgen.yml 的 models 映射必须包含 Timestamp 键")
+    if "scalar.Timestamp" not in gqlgen:
+        raise ContractError("gqlgen.yml 必须把 Timestamp 映射到本项目的 scalar.Timestamp")
+
+    scalar = re.sub(r"//[^\n]*", "", read_text(root / "internal/graphql/scalar/timestamp.go"))
+    if not re.search(r"type\s+Timestamp\s+int64\b", scalar):
+        raise ContractError("internal/graphql/scalar/timestamp.go 必须声明 type Timestamp int64")
+    if "MarshalInt64" not in scalar:
+        raise ContractError("Timestamp 标量必须委托 graphql.MarshalInt64 输出整数")
 
 
 def is_product_path(root: Path, path: Path) -> bool:

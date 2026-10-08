@@ -730,15 +730,15 @@ func (ec *executionContext) _Account_lastLoginTime(ctx context.Context, field gr
 			return obj.LastLoginTime, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v *scalar.Time) graphql.Marshaler {
-			return ec.marshalOTime2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v *scalar.Timestamp) graphql.Marshaler {
+			return ec.marshalOTimestamp2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx, selections, v)
 		},
 		true,
 		false,
 	)
 }
 func (ec *executionContext) fieldContext_Account_lastLoginTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Timestamp does not have child fields"))
 }
 
 func (ec *executionContext) _Account_createdTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
@@ -753,15 +753,15 @@ func (ec *executionContext) _Account_createdTime(ctx context.Context, field grap
 			return obj.CreatedTime, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v scalar.Time) graphql.Marshaler {
-			return ec.marshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v scalar.Timestamp) graphql.Marshaler {
+			return ec.marshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx, selections, v)
 		},
 		true,
 		true,
 	)
 }
 func (ec *executionContext) fieldContext_Account_createdTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Timestamp does not have child fields"))
 }
 
 func (ec *executionContext) _Account_updatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Account) (ret graphql.Marshaler) {
@@ -776,15 +776,15 @@ func (ec *executionContext) _Account_updatedTime(ctx context.Context, field grap
 			return obj.UpdatedTime, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v scalar.Time) graphql.Marshaler {
-			return ec.marshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v scalar.Timestamp) graphql.Marshaler {
+			return ec.marshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx, selections, v)
 		},
 		true,
 		true,
 	)
 }
 func (ec *executionContext) fieldContext_Account_updatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Account", field, false, false, errors.New("field of type Timestamp does not have child fields"))
 }
 
 func (ec *executionContext) _AccountDetail_account(ctx context.Context, field graphql.CollectedField, obj *model.AccountDetail) (ret graphql.Marshaler) {
@@ -1024,15 +1024,15 @@ func (ec *executionContext) _Org_createdTime(ctx context.Context, field graphql.
 			return obj.CreatedTime, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v scalar.Time) graphql.Marshaler {
-			return ec.marshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v scalar.Timestamp) graphql.Marshaler {
+			return ec.marshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx, selections, v)
 		},
 		true,
 		true,
 	)
 }
 func (ec *executionContext) fieldContext_Org_createdTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Org", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Org", field, false, false, errors.New("field of type Timestamp does not have child fields"))
 }
 
 func (ec *executionContext) _Org_updatedTime(ctx context.Context, field graphql.CollectedField, obj *model.Org) (ret graphql.Marshaler) {
@@ -1047,15 +1047,15 @@ func (ec *executionContext) _Org_updatedTime(ctx context.Context, field graphql.
 			return obj.UpdatedTime, nil
 		},
 		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v scalar.Time) graphql.Marshaler {
-			return ec.marshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx, selections, v)
+		func(ctx context.Context, selections ast.SelectionSet, v scalar.Timestamp) graphql.Marshaler {
+			return ec.marshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx, selections, v)
 		},
 		true,
 		true,
 	)
 }
 func (ec *executionContext) fieldContext_Org_updatedTime(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Org", field, false, false, errors.New("field of type Time does not have child fields"))
+	return graphql.NewScalarFieldContext("Org", field, false, false, errors.New("field of type Timestamp does not have child fields"))
 }
 
 func (ec *executionContext) _Query_health(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -3082,13 +3082,13 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 	return res
 }
 
-func (ec *executionContext) unmarshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx context.Context, v any) (scalar.Time, error) {
-	var res scalar.Time
+func (ec *executionContext) unmarshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx context.Context, v any) (scalar.Timestamp, error) {
+	var res scalar.Timestamp
 	err := res.UnmarshalGQL(v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) marshalNTime2project_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx context.Context, sel ast.SelectionSet, v scalar.Time) graphql.Marshaler {
+func (ec *executionContext) marshalNTimestamp2project_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx context.Context, sel ast.SelectionSet, v scalar.Timestamp) graphql.Marshaler {
 	return v
 }
 
@@ -3287,16 +3287,16 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	return res
 }
 
-func (ec *executionContext) unmarshalOTime2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx context.Context, v any) (*scalar.Time, error) {
+func (ec *executionContext) unmarshalOTimestamp2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx context.Context, v any) (*scalar.Timestamp, error) {
 	if v == nil {
 		return nil, nil
 	}
-	var res = new(scalar.Time)
+	var res = new(scalar.Timestamp)
 	err := res.UnmarshalGQL(v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) marshalOTime2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTime(ctx context.Context, sel ast.SelectionSet, v *scalar.Time) graphql.Marshaler {
+func (ec *executionContext) marshalOTimestamp2ᚖproject_idᚋinternalᚋgraphqlᚋscalarᚐTimestamp(ctx context.Context, sel ast.SelectionSet, v *scalar.Timestamp) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
