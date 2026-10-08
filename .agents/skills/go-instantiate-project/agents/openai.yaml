@@ -1,0 +1,4 @@
+interface:
+  display_name: "实例化项目"
+  short_description: "只收集 Harness 初始化信息；表单确认后先门禁 Git 与 Go 工具链，完成中性 Go 服务脚手架后再建立独立仓库与 local 身份"
+  default_prompt: "使用 $go-instantiate-project，只收集 Harness 创建终端下游所需的双语名称和固定初始化字段；拒绝接收产品业务需求，并要求我切换至下游后重新提出。表单确认后先门禁 Git 与 Go 工具链，缺失时受管安装；完成中性 Go 服务脚手架后再建立独立仓库与 local 身份，并只在实际创建唯一基线提交前安装提交模板。"

@@ -1,0 +1,33 @@
+# 构建输出
+/bin/
+/dist/
+/build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 运行期数据与日志
+/data/
+/logs/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# 本地环境变量
+.env
+.env.*
+
+# Python 工具缓存
+__pycache__/
+*.py[cod]
+
+# 编辑器与 IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# 依赖目录
+/vendor/

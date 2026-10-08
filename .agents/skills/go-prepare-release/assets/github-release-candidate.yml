@@ -1,0 +1,513 @@
+name: release-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_candidate_build:
+        description: "我确认这是已授权的原生候选构建"
+        required: true
+        type: boolean
+        default: false
+      version:
+        description: "已批准且不含 v 前缀的产品版本"
+        required: true
+        type: string
+      source_commit:
+        description: "已批准的 40 字符源码提交 SHA"
+        required: true
+        type: string
+      release_context_sha256:
+        description: "调用方验证的 .harness/release-context.json SHA-256"
+        required: true
+        type: string
+      e2e_selection:
+        description: "当前候选构建完成后是否启用 E2E"
+        required: true
+        type: choice
+        options:
+          - disabled
+          - enabled
+        default: disabled
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      PRODUCT_NAME: example-tool
+      VERSION: ${{ inputs.version }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      RELEASE_CONTEXT_SHA256: ${{ inputs.release_context_sha256 }}
+      E2E_SELECTION: ${{ inputs.e2e_selection }}
+      REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RELEASE_CONTEXT_SNAPSHOT: ${{ runner.temp }}/release-context-snapshot.json
+      BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "0"
+    steps:
+      - name: 确认已授权候选预检
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm_candidate_build }}" != "true" ]; then
+            echo "::error::候选构建未被确认授权"
+            exit 1
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 选择 Python 3 运行时
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            echo "PYTHON_COMMAND=python3" >> "$GITHUB_ENV"
+          elif command -v python >/dev/null 2>&1; then
+            echo "PYTHON_COMMAND=python" >> "$GITHUB_ENV"
+          else
+            echo "::error::候选验证需要 Python 3 运行时"
+            exit 1
+          fi
+      - name: 验证已检出源码
+        shell: bash
+        run: |
+          "$PYTHON_COMMAND" - <<'PY'
+          import os, re, subprocess
+          expected = os.environ["SOURCE_COMMIT"]
+          if not re.fullmatch(r"[0-9a-f]{40}", expected):
+              raise SystemExit("source_commit 必须是由小写十六进制字符组成的 40 字符 SHA")
+          default_branch = os.environ["REPOSITORY_DEFAULT_BRANCH"]
+          if not default_branch or any(character.isspace() for character in default_branch):
+              raise SystemExit(f"GitHub 动态默认分支无效：{default_branch!r}")
+          observed = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if observed != expected:
+              raise SystemExit(f"检出源码不匹配：预期={expected}，实际={observed}")
+          branch = subprocess.check_output(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], text=True).strip()
+          if branch != default_branch:
+              raise SystemExit(
+                  f"必须检出具名 GitHub 动态默认分支：预期={default_branch!r}，实际={branch!r}"
+              )
+          status = subprocess.check_output(
+              ["git", "status", "--porcelain=v1", "--untracked-files=all"], text=True
+          )
+          if status:
+              raise SystemExit("检出后的工作树不 clean")
+          PY
+      - name: 捕获已发布上下文
+        shell: bash
+        run: |
+          "$PYTHON_COMMAND" .agents/skills/go-prepare-release/scripts/verify_release_context.py capture \
+            --project-root "$GITHUB_WORKSPACE" \
+            --source-commit "$SOURCE_COMMIT" \
+            --expected-context-sha256 "$RELEASE_CONTEXT_SHA256" \
+            --repository-default-branch "$REPOSITORY_DEFAULT_BRANCH" \
+            --snapshot "$RELEASE_CONTEXT_SNAPSHOT"
+      - name: 读取项目最低 Go 版本
+        shell: bash
+        run: |
+          "$PYTHON_COMMAND" - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          manifest = Path("go.mod").read_text(encoding="utf-8")
+          match = re.search(r"(?m)^go\s+(?P<version>\d+\.\d+(?:\.\d+)?)\s*$", manifest)
+          if match is None:
+              raise SystemExit("go.mod 缺少可识别的 go 指令")
+          version = match.group("version")
+          if version.count(".") == 1:
+              version += ".0"
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"GO_TOOLCHAIN={version}\n")
+          print(f"使用项目声明的最低 Go 工具链 {version}")
+          PY
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: ${{ env.GO_TOOLCHAIN }}
+          cache: false
+      - name: 验证候选版本
+        shell: bash
+        run: |
+          "$PYTHON_COMMAND" .agents/skills/go-manage-version/scripts/version_gate.py check --project-root "$GITHUB_WORKSPACE" --phase build
+          "$PYTHON_COMMAND" - <<'PY'
+          import json, os, subprocess
+          state = json.loads(open(".harness/version-state.json", encoding="utf-8").read())
+          if state["target_version"] != os.environ["VERSION"]:
+              raise SystemExit(
+                  f"候选版本不匹配：状态={state['target_version']}，输入={os.environ['VERSION']}"
+              )
+          PY
+      - name: 验证发布更新日志
+        shell: bash
+        run: |
+          "$PYTHON_COMMAND" .agents/skills/go-prepare-release/scripts/release_notes.py check --file release-notes.json --expected-version "$VERSION"
+          "$PYTHON_COMMAND" - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+
+          path = Path("release-notes.json")
+          if path.is_symlink() or not path.is_file():
+              raise SystemExit("release-notes.json 必须是非符号链接普通文件")
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"RELEASE_NOTES_SHA256={digest}\n")
+          PY
+      - name: 准备 Unix 发布目录
+        if: runner.os != 'Windows' && success()
+        shell: bash
+        run: bash .agents/skills/go-build-release/scripts/prepare-release-directory.sh "$GITHUB_WORKSPACE"
+      - name: 准备 Windows 发布目录
+        if: runner.os == 'Windows' && success()
+        shell: pwsh
+        run: '& ".agents/skills/go-build-release/scripts/prepare-release-directory.ps1" -ProjectRoot $env:GITHUB_WORKSPACE'
+      - name: 验证候选
+        shell: bash
+        run: |
+          set -e
+          go vet ./...
+          "$PYTHON_COMMAND" - <<'PY'
+          import subprocess, sys
+          result = subprocess.run(["go", "test", "./...", "-list", ".*"], text=True, capture_output=True)
+          sys.stdout.write(result.stdout)
+          sys.stderr.write(result.stderr)
+          if result.returncode:
+              raise SystemExit(result.returncode)
+          count = sum(
+              line.startswith("Test")
+              for line in result.stdout.splitlines()
+              if line and not line.startswith("ok")
+          )
+          if count == 0:
+              raise SystemExit("未发现测试")
+          print(f"发现 {count} 个测试")
+          PY
+          go test ./... -race
+          "$PYTHON_COMMAND" - <<'PY'
+          import os, subprocess
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          status = subprocess.check_output(
+              ["git", "status", "--porcelain=v1", "--untracked-files=all"], text=True
+          )
+          if head != os.environ["SOURCE_COMMIT"] or status:
+              raise SystemExit("测试后源码提交或 clean 状态发生变化")
+          PY
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_COMMIT}" -o "bin/${PRODUCT_NAME}" ./cmd/server
+      - name: 尝试 Unix 签名
+        if: runner.os != 'Windows' && success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="bin/${PRODUCT_NAME}"
+          hook=".release-signing/sign-candidate.sh"
+          status="unsigned"
+          reason="hook-not-configured"
+          evidence="not-applicable"
+          if [[ -f "$hook" ]]; then
+            set +e
+            bash "$hook" probe "$binary" >/dev/null 2>&1
+            probe_status=$?
+            set -e
+            if [[ $probe_status -eq 0 ]]; then
+              if ! bash "$hook" sign "$binary" >/dev/null 2>&1; then
+                echo "::error::已配置的签名尝试失败"
+                exit 1
+              fi
+              if ! bash "$hook" verify "$binary" >/dev/null 2>&1; then
+                echo "::error::已签名候选验证失败"
+                exit 1
+              fi
+              status="signed"
+              reason="configured-hook-succeeded"
+              evidence="configured-hook-verify-exit-0"
+            elif [[ $probe_status -eq 3 ]]; then
+              reason="signing-conditions-unavailable"
+            else
+              echo "::error::签名探测失败，退出码为 $probe_status"
+              exit 1
+            fi
+          fi
+          printf 'SIGNING_STATUS=%s\nSIGNING_REASON=%s\nSIGNING_EVIDENCE=%s\n' "$status" "$reason" "$evidence" >> "$GITHUB_ENV"
+      - name: 尝试 Windows 签名
+        if: runner.os == 'Windows' && success()
+        shell: pwsh
+        run: |
+          $binary = "bin/$env:PRODUCT_NAME.exe"
+          $hook = ".release-signing/sign-candidate.ps1"
+          $status = "unsigned"
+          $reason = "hook-not-configured"
+          $evidence = "not-applicable"
+          if (Test-Path -LiteralPath $hook -PathType Leaf) {
+            & pwsh -NoProfile -File $hook probe $binary *> $null
+            $probeStatus = $LASTEXITCODE
+            if ($probeStatus -eq 0) {
+              & pwsh -NoProfile -File $hook sign $binary *> $null
+              if ($LASTEXITCODE -ne 0) { throw "已配置的签名尝试失败" }
+              & pwsh -NoProfile -File $hook verify $binary *> $null
+              if ($LASTEXITCODE -ne 0) { throw "已签名候选验证失败" }
+              $status = "signed"
+              $reason = "configured-hook-succeeded"
+              $evidence = "configured-hook-verify-exit-0"
+            } elseif ($probeStatus -eq 3) {
+              $reason = "signing-conditions-unavailable"
+            } else {
+              throw "签名探测失败，退出码为 $probeStatus"
+            }
+          }
+          "SIGNING_STATUS=$status" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SIGNING_REASON=$reason" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SIGNING_EVIDENCE=$evidence" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: 打包 Unix 候选
+        id: package_unix
+        if: runner.os != 'Windows' && success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="bin/${PRODUCT_NAME}"
+          test -f "$binary"
+          platform="$GOOS"
+          arch="$GOARCH"
+          archive="${PRODUCT_NAME}-v${VERSION}-${platform}-${arch}.tar.gz"
+          stage="$(mktemp -d "${GITHUB_WORKSPACE}/../.${PRODUCT_NAME}.release-candidate.XXXXXX")"
+          chmod 700 "$stage"
+          tar -czf "${stage}/${archive}" -C bin "$PRODUCT_NAME" -C "$GITHUB_WORKSPACE" release-notes.json
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$stage" && sha256sum "$archive" > "${archive}.sha256")
+          else
+            (cd "$stage" && shasum -a 256 "$archive" > "${archive}.sha256")
+          fi
+          printf 'archive_name=%s\nstage_path=%s\n' "$archive" "$stage" >> "$GITHUB_OUTPUT"
+      - name: 打包 Windows 候选
+        id: package_windows
+        if: runner.os == 'Windows' && success()
+        shell: pwsh
+        run: |
+          $binary = "bin/$env:PRODUCT_NAME.exe"
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "缺少发布二进制文件：$binary" }
+          $platform = $env:GOOS
+          $arch = $env:GOARCH
+          $archive = "$env:PRODUCT_NAME-v$env:VERSION-$platform-$arch.zip"
+          $stage = Join-Path (Split-Path -Parent $env:GITHUB_WORKSPACE) (".$env:PRODUCT_NAME.release-candidate." + [Guid]::NewGuid().ToString("N"))
+          [IO.Directory]::CreateDirectory($stage) | Out-Null
+          Compress-Archive -LiteralPath @($binary, "release-notes.json") -DestinationPath (Join-Path $stage $archive)
+          $hash = (Get-FileHash (Join-Path $stage $archive) -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content (Join-Path $stage "$archive.sha256") -Encoding ascii
+          "archive_name=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "stage_path=$stage" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: 解析候选制品
+        id: candidate_artifact
+        shell: bash
+        env:
+          UNIX_ARCHIVE: ${{ steps.package_unix.outputs.archive_name }}
+          WINDOWS_ARCHIVE: ${{ steps.package_windows.outputs.archive_name }}
+          UNIX_STAGE: ${{ steps.package_unix.outputs.stage_path }}
+          WINDOWS_STAGE: ${{ steps.package_windows.outputs.stage_path }}
+        run: |
+          "$PYTHON_COMMAND" - <<'PY'
+          import os, pathlib
+          pairs = [
+              pair
+              for pair in (
+                  (os.environ.get("UNIX_ARCHIVE", ""), os.environ.get("UNIX_STAGE", "")),
+                  (os.environ.get("WINDOWS_ARCHIVE", ""), os.environ.get("WINDOWS_STAGE", "")),
+              )
+              if pair[0] or pair[1]
+          ]
+          if len(pairs) != 1 or not all(pairs[0]) or pathlib.PurePath(pairs[0][0]).name != pairs[0][0]:
+              raise SystemExit(f"预期恰好一个安全的候选归档/暂存目录组合，实际为 {pairs!r}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"archive_name={pairs[0][0]}\nstage_path={pairs[0][1]}\n")
+          PY
+      - name: 记录候选清单
+        shell: bash
+        env:
+          CANDIDATE_ARCHIVE: ${{ steps.candidate_artifact.outputs.archive_name }}
+          CANDIDATE_STAGE: ${{ steps.candidate_artifact.outputs.stage_path }}
+        run: |
+          "$PYTHON_COMMAND" .agents/skills/go-prepare-release/scripts/verify_release_context.py verify \
+            --project-root "$GITHUB_WORKSPACE" \
+            --source-commit "$SOURCE_COMMIT" \
+            --expected-context-sha256 "$RELEASE_CONTEXT_SHA256" \
+            --repository-default-branch "$REPOSITORY_DEFAULT_BRANCH" \
+            --snapshot "$RELEASE_CONTEXT_SNAPSHOT"
+          "$PYTHON_COMMAND" - <<'PY'
+          import hashlib, json, os, pathlib, platform, subprocess, tarfile, zipfile
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          release = pathlib.Path(os.environ["CANDIDATE_STAGE"])
+          if release.is_symlink() or not release.is_dir():
+              raise SystemExit("候选暂存目录必须是普通目录")
+          expected_stage_prefix = f".{os.environ['PRODUCT_NAME']}.release-candidate."
+          if release.parent.resolve() != root.parent or not release.name.startswith(expected_stage_prefix):
+              raise SystemExit("候选暂存目录必须位于项目根同级")
+          archive_name = os.environ["CANDIDATE_ARCHIVE"]
+          if pathlib.PurePath(archive_name).name != archive_name:
+              raise SystemExit("候选归档名称不安全")
+          archive = release / archive_name
+          checksum = release / f"{archive_name}.sha256"
+          expected_before = {archive_name, checksum.name}
+          observed_before = {path.name for path in release.iterdir()}
+          if observed_before != expected_before:
+              raise SystemExit(f"生成清单前的候选文件集异常：预期={sorted(expected_before)}，实际={sorted(observed_before)}")
+          if any(path.is_symlink() or not path.is_file() for path in (archive, checksum)):
+              raise SystemExit("候选归档和校验和必须是非符号链接的普通文件")
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          checksum_parts = checksum.read_text(encoding="ascii").strip().split()
+          if not checksum_parts or checksum_parts[0].lower() != digest:
+              raise SystemExit("候选校验和与归档字节不匹配")
+          release_notes = root / "release-notes.json"
+          if release_notes.is_symlink() or not release_notes.is_file():
+              raise SystemExit("release-notes.json 必须是非符号链接普通文件")
+          release_notes_bytes = release_notes.read_bytes()
+          release_notes_digest = hashlib.sha256(release_notes_bytes).hexdigest()
+          if release_notes_digest != os.environ["RELEASE_NOTES_SHA256"]:
+              raise SystemExit("发布更新日志在构建期间发生变化")
+          if archive.name.endswith(".tar.gz"):
+              with tarfile.open(archive, "r:gz") as package:
+                  packaged = package.extractfile("release-notes.json")
+                  packaged_release_notes = packaged.read() if packaged is not None else None
+          elif archive.name.endswith(".zip"):
+              with zipfile.ZipFile(archive) as package:
+                  packaged_release_notes = package.read("release-notes.json")
+          else:
+              raise SystemExit("候选归档格式不支持更新日志验证")
+          if packaged_release_notes != release_notes_bytes:
+              raise SystemExit("归档内更新日志与源码事实不一致")
+          snapshot_path = pathlib.Path(os.environ["RELEASE_CONTEXT_SNAPSHOT"])
+          if snapshot_path.is_symlink() or not snapshot_path.is_file():
+              raise SystemExit("发布上下文快照必须是普通文件")
+          snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+          if snapshot.get("sourceCommit") != os.environ["SOURCE_COMMIT"]:
+              raise SystemExit("发布上下文快照未绑定候选 sourceCommit")
+          if snapshot.get("releaseContextSha256") != os.environ["RELEASE_CONTEXT_SHA256"]:
+              raise SystemExit("发布上下文快照未绑定上下文摘要")
+          if snapshot.get("version") != os.environ["VERSION"]:
+              raise SystemExit("发布上下文版本与候选版本不一致")
+          expected_tag = f"v{os.environ['VERSION']}-{snapshot.get('expectedTag', '').rsplit('-', 1)[-1]}"
+          if snapshot.get("expectedTag") != expected_tag:
+              raise SystemExit("发布上下文 tag 与候选版本不一致")
+          review = snapshot["releaseReview"]
+          candidate_selections = snapshot["candidateSelections"]
+          go_version = subprocess.check_output(["go", "version"], text=True).strip()
+          manifest = {
+              "project": os.environ["PRODUCT_NAME"],
+              "version": os.environ["VERSION"],
+              "sourceCommit": os.environ["SOURCE_COMMIT"],
+              "buildRun": os.environ["BUILD_RUN_ID"],
+              "buildMode": "cross-platform-native",
+              "platform": os.environ["GOOS"],
+              "architecture": os.environ["GOARCH"],
+              "target": f"{os.environ['GOOS']}/{os.environ['GOARCH']}",
+              "host": platform.platform(),
+              "goVersion": go_version,
+              "artifactKind": "binary",
+              "archive": archive.name,
+              "sha256": digest,
+              "tests": "passed",
+              "e2eSelection": os.environ["E2E_SELECTION"],
+              "releaseContextSha256": snapshot["releaseContextSha256"],
+              "releaseTag": snapshot["expectedTag"],
+              "releaseReview": review,
+              "candidateSelections": candidate_selections,
+              "reviewSelection": review["selection"],
+              "reviewStatus": review["status"],
+              "releaseNotesVersion": f"v{os.environ['VERSION']}",
+              "releaseNotesSha256": release_notes_digest,
+              "releaseNotesPath": "release-notes.json",
+              "signingStatus": os.environ["SIGNING_STATUS"],
+              "signingReason": os.environ["SIGNING_REASON"],
+              "signingEvidence": {
+                  "verification": os.environ["SIGNING_EVIDENCE"],
+                  "detachedFiles": [],
+              },
+              "milestoneAcceptance": "pending",
+          }
+          if review["selection"] == "enabled":
+              manifest["reviewedSourceCommit"] = review["reviewedSourceCommit"]
+              manifest["reviewEvidence"] = {
+                  "scopeBase": review["scopeBase"],
+                  "sourceHead": review["sourceHead"],
+                  "scopeDiffSha256": review["scopeDiffSha256"],
+                  "checks": review["checks"],
+                  "evidenceSummary": review["evidenceSummary"],
+              }
+          elif review["selection"] == "disabled":
+              manifest["reviewReason"] = review["reason"]
+              manifest["reviewRemainingRisk"] = review["remainingRisk"]
+          else:
+              raise SystemExit("发布审查选择不受支持")
+          manifest_path = release / f"{archive.name}.manifest.json"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          expected_after = expected_before | {manifest_path.name}
+          observed_after = {path.name for path in release.iterdir()}
+          if observed_after != expected_after:
+              raise SystemExit(f"最终候选文件集异常：预期={sorted(expected_after)}，实际={sorted(observed_after)}")
+          PY
+      - name: 提交候选制品集合
+        shell: bash
+        env:
+          CANDIDATE_ARCHIVE: ${{ steps.candidate_artifact.outputs.archive_name }}
+          CANDIDATE_STAGE: ${{ steps.candidate_artifact.outputs.stage_path }}
+        run: |
+          "$PYTHON_COMMAND" - <<'PY'
+          import os, pathlib, stat
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          release = root / "release"
+          stage = pathlib.Path(os.environ["CANDIDATE_STAGE"])
+          archive = os.environ["CANDIDATE_ARCHIVE"]
+          expected = {archive, f"{archive}.sha256", f"{archive}.manifest.json"}
+          reparse_flag = 0x400
+
+          def require_plain_directory(path):
+              observed = os.lstat(path)
+              if stat.S_ISLNK(observed.st_mode) or getattr(observed, "st_file_attributes", 0) & reparse_flag:
+                  raise SystemExit(f"拒绝重解析目录：{path}")
+              if not stat.S_ISDIR(observed.st_mode):
+                  raise SystemExit(f"预期为目录：{path}")
+
+          require_plain_directory(release)
+          require_plain_directory(stage)
+          expected_stage_prefix = f".{os.environ['PRODUCT_NAME']}.release-candidate."
+          if stage.parent.resolve() != root.parent or not stage.name.startswith(expected_stage_prefix):
+              raise SystemExit("候选暂存目录必须位于项目根同级")
+          if any(release.iterdir()):
+              raise SystemExit("构建前刷新后发布目录发生变化")
+          if {path.name for path in stage.iterdir()} != expected:
+              raise SystemExit("提交前候选暂存目录文件集发生变化")
+
+          os.rmdir(release)
+          os.rename(stage, release)
+
+          require_plain_directory(release)
+          if release.resolve() != root / "release":
+              raise SystemExit("已提交的发布目录越出项目根目录")
+          committed = list(release.iterdir())
+          if {path.name for path in committed} != expected or any(path.is_symlink() or not path.is_file() for path in committed):
+              raise SystemExit("已提交的发布文件集不是精确的普通文件候选集合")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: success()
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}-release-candidate
+          path: |
+            release/${{ steps.candidate_artifact.outputs.archive_name }}
+            release/${{ steps.candidate_artifact.outputs.archive_name }}.sha256
+            release/${{ steps.candidate_artifact.outputs.archive_name }}.manifest.json
+          if-no-files-found: error

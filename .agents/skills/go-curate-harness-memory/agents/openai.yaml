@@ -1,0 +1,4 @@
+interface:
+  display_name: "治理 Harness 自身记忆历史"
+  short_description: "仅 Harness 自身可用，不随下游派生；把过期 ADR/Changelog 条目原文迁移到同目录 _history.md"
+  default_prompt: "使用 $go-curate-harness-memory，把 docs/adr/ 或 docs/changelog/ 当前最新文件中已被后续决定完全取代、且不再被任何规范引用的过期条目原文迁移到同目录 _history.md，保留仍生效的条目，存疑条目列为候选交人工复核。"

@@ -1,0 +1,78 @@
+# GraphQL schema —— **只读查询层**。
+#
+# 定位：与 REST 并存的查询框架。
+#
+#   REST     负责全部命令操作（注册 / 登录 / 刷新 / 登出 / 改密），以及 /healthz 探针。
+#   GraphQL  只提供 Query，不提供 Mutation。
+#
+# 为什么不做 Mutation：写操作需要事务边界、幂等与鉴权的一致语义，
+# 而 GraphQL 一律返回 HTTP 200，失败只能从 errors[] 里看 —— 对登录这类
+# 需要明确状态码的场景是净损失。查询则相反：客户端能按需选字段、一次取多个资源，
+# 这才是 GraphQL 的价值所在。
+#
+# 端点：POST /graphql（路径与开关见 configs/config.yaml 的 graphql 段）
+# 浏览器调试：开发环境 GET 同一路径打开 GraphiQL，右侧 Docs 面板即接口文档
+#           （本文件里的 # 注释会原样出现在那里）
+#
+# 响应体是 {data, errors} 自有形状，**不套用** REST 的 {model, data, request_id}
+# 信封 —— 这是 GraphQL 规范决定的，不是遗漏。
+#
+# 改完本文件必须重新生成代码，否则编译期就会报类型不匹配：
+#
+#   go run github.com/99designs/gqlgen generate
+
+# RFC3339 时间标量（Go 侧对应 internal/graphql/scalar.Time）
+scalar Time
+
+# 账号。
+#
+# 这里**没有** password / tokenVersion 等敏感字段：GraphQL 类型是独立于
+# 数据库实体的投影（internal/graphql/model），不直接复用 model.Account，
+# 所以「新增数据库字段就自动对外暴露」这种事不会发生。
+type Account {
+  id: ID!
+  username: String!
+  email: String!
+  nickname: String!
+  status: Int!
+  lastLoginIp: String!
+  lastLoginTime: Time
+  createdTime: Time!
+  updatedTime: Time!
+}
+
+# 组织
+type Org {
+  id: ID!
+  name: String!
+  isDefault: Boolean!
+  createdTime: Time!
+  updatedTime: Time!
+}
+
+# 当前账号详情：账号 + 其默认组织。
+#
+# 组织单独成字段而不是拍平进 Account：账号与组织是一对多的，
+# 后续引入 org_user 后这个形状不需要改。
+type AccountDetail {
+  account: Account!
+  org: Org
+}
+
+# 服务健康状态
+type Health {
+  available: Boolean!
+  name: String!
+  version: String!
+  env: String!
+}
+
+type Query {
+  # 服务健康检查。公开，无需令牌。
+  health: Health!
+
+  # 当前登录账号及其默认组织。
+  # 需要 Authorization: Bearer <token>，且只返回令牌对应的账号本身 ——
+  # 不接受任何「目标账号 ID」入参，因此不存在越权枚举的可能。
+  me: AccountDetail!
+}

@@ -1,0 +1,47 @@
+# English error messages. Keys are the stable error codes defined in apperr.
+common.bad.request: Invalid request parameters
+common.unauthorized: Authentication required
+common.forbidden: You are not allowed to perform this operation
+common.not.found: The requested resource does not exist
+common.conflict: The requested resource conflicts
+common.unprocessable: The request cannot be accepted by business rules
+common.too.many.requests: Too many requests, please try again later
+common.internal.error: Internal server error
+common.route.not.found: The requested endpoint does not exist
+common.method.not.allowed: The request method is not supported
+common.unsupported.media.type: Unsupported request content type
+common.payload.too.large: Request payload is too large
+
+auth.token.missing: Missing access token
+auth.token.invalid: Invalid access token
+auth.token.expired: Access token has expired
+auth.token.revoked: Access token has been revoked
+auth.token.malformed: Access token cannot be parsed
+auth.token.wrong.type: Access token type mismatch
+auth.token.sign.failed: Failed to sign access token
+auth.refresh.invalid: Invalid refresh token
+auth.refresh.expired: Refresh token has expired
+auth.credentials.invalid: Incorrect account or credential
+auth.account.disabled: The account has been disabled
+auth.signing.key.missing: Server signing key is missing
+auth.issuer.mismatch: Token issuer does not match this service
+
+account.not.found: Account does not exist
+account.exists: Account already exists
+account.password.weak: Password is too weak
+account.password.mismatch: Current password does not match
+account.username.taken: Username is already taken
+account.profile.locked: Account profile cannot be modified now
+
+org.not.found: Organization does not exist
+org.member.exists: Member already belongs to the organization
+
+validate.required: This field is required
+validate.username: Invalid username format
+validate.password: Invalid password format
+validate.email: Invalid email format
+validate.length: Invalid field length
+validate.format: Invalid field format
+validate.number: This field must be a number
+validate.url: This field must be a valid URL
+validate.oneof: This field value is out of the allowed range

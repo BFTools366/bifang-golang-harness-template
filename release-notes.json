@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "releases": [
+    {
+      "version": "v202609231500",
+      "releaseDate": "2026-09-23",
+      "featureOptimizations": [
+        {
+          "zh-CN": "新增毕方 Go Harness 模板：在 Go Web 服务模板基础上内置 Harness 工程方法论、验证脚本与 Agent Skills。",
+          "en-US": "Added the Bifang Go Harness Template: a Go web service template with the Harness engineering methodology, validation scripts, and Agent Skills built in."
+        },
+        {
+          "zh-CN": "文档体系覆盖 Harness 工程、Agent-first 设计、工程规则、发布流程、验证与 CLI 契约。",
+          "en-US": "Documentation now covers Harness engineering, Agent-first design, engineering rules, the release process, verification, and the CLI contract."
+        },
+        {
+          "zh-CN": "验证脚本提供单一入口与领域校验器，覆盖文档一致性、版本管理、Git 生命周期与架构边界。",
+          "en-US": "Validation scripts provide a single entry point plus domain validators covering document consistency, version management, the Git lifecycle, and architecture boundaries."
+        }
+      ],
+      "bugFixes": []
+    }
+  ]
+}

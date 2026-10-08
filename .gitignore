@@ -1,0 +1,58 @@
+# Go 构建产物
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# 当前构建结果；由 desktop-build-go-release 在每次构建前原子刷新
+/release/
+# 原子刷新或候选提交被中断时可能遗留的同根 staging
+/.release-clean.*
+
+# 覆盖率与性能分析产物
+/coverage/
+*.prof
+*.cover
+coverage.txt
+
+# 本地环境变量；允许提交公开示例
+.env
+.env.*
+!.env.example
+
+# 本地依赖与工具缓存
+/vendor/
+/tmp/
+
+# Python 校验脚本编译产物
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# 编辑器、系统与临时文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+# 临时调试脚手架：一次性诊断脚本与其输出，不得进入交付物
+/dbg-*.ps1
+/.pscheck.ps1
+/*-out.txt
+/*-err.txt
+/*-rc.txt
+/gatedbg-*.txt
+/_tmp_*.py
+
+# Go 服务运行期数据目录
+/data/
+
+# Agent 工作区记忆：本机环境细节与个人工作记录，不属交付面
+/.workbuddy-ai/

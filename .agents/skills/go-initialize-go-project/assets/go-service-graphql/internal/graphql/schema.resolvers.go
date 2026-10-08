@@ -1,0 +1,52 @@
+package graphql
+
+import (
+	"context"
+
+	"project_id/internal/graphql/model"
+)
+
+// Health is the resolver for the health field.
+//
+// 只读配置，不碰数据库 —— 因此匿名请求也能拿到结果。
+func (r *queryResolver) Health(ctx context.Context) (*model.Health, error) {
+	return &model.Health{
+		Available: true,
+		Name:      r.Config.App.Name,
+		Version:   r.Config.App.Version,
+		Env:       r.Config.App.Env,
+	}, nil
+}
+
+// Me is the resolver for the me field.
+//
+// 鉴权中间件只把账号主键写进上下文，账号实体在这里按主键重新加载 ——
+// 这样 GraphQL 层与 REST 的 profile 处理器走同一条加载路径，
+// 账号被禁用之类的状态变化在两侧表现一致。
+func (r *queryResolver) Me(ctx context.Context) (*model.AccountDetail, error) {
+	id, err := currentAccountID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	account, err := r.Accounts.LoadForAuth(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// 只查令牌对应的账号自己的默认组织，不接受任何入参指定账号 ID
+	org, err := r.Accounts.DefaultOrg(ctx, account.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.AccountDetail{
+		Account: convertAccount(account),
+		Org:     convertOrg(org),
+	}, nil
+}
+
+// Query returns QueryResolver implementation.
+func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
+
+type queryResolver struct{ *Resolver }

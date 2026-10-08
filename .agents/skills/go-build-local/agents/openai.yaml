@@ -1,0 +1,4 @@
+interface:
+  display_name: "构建本地试跑二进制"
+  short_description: "原生构建非发布、未签名的本机 Go 二进制"
+  default_prompt: "使用 $go-build-local 在当前宿主构建本地试跑二进制；不提交、不生成发布日志、不写 release/，也不询问 E2E。"

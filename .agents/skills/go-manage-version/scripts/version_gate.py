@@ -1,0 +1,609 @@
+#!/usr/bin/env python3
+"""管理下游 Go 产品的确定性语义化版本状态。"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+STATE_RELATIVE = Path(".harness/version-state.json")
+MODULE_FILE = "go.mod"
+BRAND_RELATIVE = Path("internal/pkg/identity/brand.go")
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+)
+CHANGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+SOURCE_COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+SEMVER_COMPONENT_MAX = (1 << 64) - 1
+SEMVER_COMPONENT_MAX_TEXT = str(SEMVER_COMPONENT_MAX)
+KINDS = ("feature", "bug-fix", "major", "maintenance")
+
+
+class GateError(RuntimeError):
+    """表示必须失败关闭的版本契约错误。"""
+
+
+def _decimal_is_at_most(value: str, maximum: str) -> bool:
+    """不依赖大整数转换比较非负十进制文本。"""
+
+    significant = value.lstrip("0") or "0"
+    return len(significant) < len(maximum) or (
+        len(significant) == len(maximum) and significant <= maximum
+    )
+
+
+@dataclass(frozen=True, order=True)
+class Version:
+    """表示稳定三段语义化版本；Minor/Patch 固定为 `0..99`，不兼容任何历史下位分量 `100`。"""
+
+    major: int
+    minor: int
+    patch: int
+
+    @classmethod
+    def parse(cls, raw: object) -> "Version":
+        if not isinstance(raw, str):
+            raise GateError("version value must be a string")
+        match = SEMVER_PATTERN.fullmatch(raw)
+        if not match:
+            raise GateError(
+                f"unsupported version {raw!r}; expected stable MAJOR.MINOR.PATCH"
+            )
+        major_text, minor_text, patch_text = match.groups()
+        if not _decimal_is_at_most(major_text, SEMVER_COMPONENT_MAX_TEXT):
+            raise GateError("major component exceeds uint64::MAX")
+        if (
+            not _decimal_is_at_most(minor_text, "99")
+            or not _decimal_is_at_most(patch_text, "99")
+        ):
+            raise GateError(
+                "minor and patch components outside supported range 0..99"
+            )
+        return cls(int(major_text), int(minor_text), int(patch_text))
+
+    def normalized(self) -> "Version":
+        """把刚发生进位、可能达到 100 的下位分量结转为 base-100 表示。"""
+
+        minor = self.minor + self.patch // 100
+        patch = self.patch % 100
+        major = self.major + minor // 100
+        if major > SEMVER_COMPONENT_MAX:
+            raise GateError("automatic Major carry exceeds uint64::MAX")
+        return Version(major, minor % 100, patch)
+
+    def bump_minor(self) -> "Version":
+        """提升一次中间版本，并把末位归零，必要时向 Major 进位。"""
+
+        current = self.normalized()
+        return Version(current.major, current.minor + 1, 0).normalized()
+
+    def bump_patch(self) -> "Version":
+        """提升一次末位版本，必要时连续向 Minor 和 Major 进位。"""
+
+        current = self.normalized()
+        return Version(current.major, current.minor, current.patch + 1).normalized()
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+
+def _require_regular_file(path: Path, label: str) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise GateError(f"{label} must be a regular non-symlink file: {path}")
+
+
+def _project_directory(raw: str) -> Path:
+    candidate = Path(raw).expanduser()
+    if candidate.is_symlink():
+        raise GateError(f"project root must not be a symlink: {candidate}")
+    root = candidate.resolve()
+    if not root.is_dir():
+        raise GateError(f"project root is not a directory: {root}")
+    return root
+
+
+def _initialization_root(raw: str) -> Path:
+    """解析初始化根目录；init 是唯一允许在独立 Git 建立前运行的命令。"""
+
+    return _project_directory(raw)
+
+
+def _is_independent_git_root(root: Path) -> bool:
+    """判断目录是否已经是独立 Git 顶层；无 Git 或仅位于父仓库内均返回 False。"""
+
+    git_marker = root / ".git"
+    if git_marker.exists() or git_marker.is_symlink():
+        return True
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return Path(result.stdout.strip()).resolve() == root
+
+
+def _project_root(raw: str) -> Path:
+    root = _project_directory(raw)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise GateError("project root must be inside an independent Git repository") from exc
+    git_root = Path(result.stdout.strip()).resolve()
+    if git_root != root:
+        raise GateError(f"Git top-level {git_root} does not equal project root {root}")
+    return root
+
+
+def _module_path(path: Path) -> str:
+    """读取根 `go.mod` 的模块路径，作为下游产品标识的稳定事实源。"""
+
+    _require_regular_file(path, "root go.mod")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("module "):
+            module = stripped[len("module ") :].strip()
+            if module:
+                return module
+    raise GateError("root go.mod must declare a module path")
+
+
+def _require_go_module(path: Path) -> None:
+    """要求根模块文件存在且为普通文件，缺一即失败关闭。"""
+
+    if not path.exists() and not path.is_symlink():
+        raise GateError(f"missing root go.mod: {path}")
+    _module_path(path)
+
+
+def _declared_product_version(root: Path) -> Version:
+    """从品牌模板唯一登记的产品版本常量读取初始版本，缺失或不合法时失败关闭。"""
+
+    target = root / BRAND_RELATIVE
+    _require_regular_file(target, "product identity source")
+    text = target.read_text(encoding="utf-8")
+    match = re.search(
+        r'(?m)^\s*const\s+productVersion\s*=\s*"(?P<version>[^"]+)"\s*$',
+        text,
+    )
+    if match is None:
+        raise GateError(
+            "product identity source must declare exactly one productVersion constant"
+        )
+    return Version.parse(match.group("version"))
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise GateError(f"refusing symlink state directory: {path.parent}")
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temp_path = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _new_state(version: Version) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "cycle_base_version": str(version),
+        "target_version": str(version),
+        "feature_bump_applied": False,
+        "pending_changes": [],
+        "applied_bug_ids": [],
+        "last_release": None,
+    }
+
+
+def _state_json(state: dict[str, Any]) -> str:
+    return json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _exact_keys(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and set(value) == keys
+
+
+def _load_state(path: Path) -> dict[str, Any]:
+    _require_regular_file(path, "version state")
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GateError(f"invalid version state: {path}") from exc
+    required = {
+        "schema_version",
+        "cycle_base_version",
+        "target_version",
+        "feature_bump_applied",
+        "pending_changes",
+        "applied_bug_ids",
+        "last_release",
+    }
+    if not _exact_keys(state, required):
+        raise GateError("version state has unexpected schema fields")
+    if state["schema_version"] != 1:
+        raise GateError("unsupported version state schema")
+    base = Version.parse(state["cycle_base_version"])
+    target = Version.parse(state["target_version"])
+    if target < base:
+        raise GateError("target_version cannot be lower than cycle_base_version")
+    if not isinstance(state["feature_bump_applied"], bool):
+        raise GateError("feature_bump_applied must be boolean")
+    if not isinstance(state["pending_changes"], list):
+        raise GateError("pending_changes must be an array")
+    if not isinstance(state["applied_bug_ids"], list):
+        raise GateError("applied_bug_ids must be an array")
+    seen: set[str] = set()
+    for item in state["pending_changes"]:
+        if not _exact_keys(item, {"change_id", "kind", "required_version"}):
+            raise GateError("pending change has unexpected fields")
+        _validate_change_id(item["change_id"])
+        if not isinstance(item["kind"], str) or item["kind"] not in {
+            "feature",
+            "bug-fix",
+            "major",
+        }:
+            raise GateError("pending change has unsupported kind")
+        required_version = Version.parse(item["required_version"])
+        if required_version > target:
+            raise GateError("pending required_version cannot exceed target_version")
+        if item["change_id"] in seen:
+            raise GateError("pending change IDs must be unique")
+        seen.add(item["change_id"])
+    bug_ids = state["applied_bug_ids"]
+    if any(not isinstance(item, str) for item in bug_ids) or len(set(bug_ids)) != len(bug_ids):
+        raise GateError("applied_bug_ids must contain unique strings")
+    for bug_id in bug_ids:
+        _validate_change_id(bug_id)
+    bug_id_set = set(bug_ids)
+    pending_requires_feature_lock = any(
+        item["kind"] in {"feature", "major"} for item in state["pending_changes"]
+    )
+    if state["feature_bump_applied"] != pending_requires_feature_lock:
+        raise GateError(
+            "feature_bump_applied must match pending feature or major changes"
+        )
+    pending_bug_ids = {
+        item["change_id"]
+        for item in state["pending_changes"]
+        if item["kind"] == "bug-fix"
+    }
+    if not pending_bug_ids.issubset(bug_id_set):
+        raise GateError("pending bug-fix IDs must exist in applied_bug_ids")
+    pending_non_bug_ids = {
+        item["change_id"]
+        for item in state["pending_changes"]
+        if item["kind"] != "bug-fix"
+    }
+    if pending_non_bug_ids & bug_id_set:
+        raise GateError("historical bug-fix IDs cannot be reused by another kind")
+    last_release = state["last_release"]
+    if last_release is not None:
+        if not _exact_keys(last_release, {"source_commit", "version"}):
+            raise GateError("last_release has unexpected fields")
+        released_version = Version.parse(last_release["version"])
+        if released_version != base:
+            raise GateError("last_release version must equal cycle_base_version")
+        if not isinstance(last_release["source_commit"], str) or not SOURCE_COMMIT_PATTERN.fullmatch(last_release["source_commit"]):
+            raise GateError("last_release source_commit must be 40 hexadecimal characters")
+    return state
+
+
+def _validate_change_id(change_id: Any) -> str:
+    if not isinstance(change_id, str) or not CHANGE_ID_PATTERN.fullmatch(change_id):
+        raise GateError(
+            "change_id must be 1..128 characters using letters, digits, dot, underscore, colon, slash, or hyphen"
+        )
+    return change_id
+
+
+def _consistent_context(root: Path) -> tuple[Path, Path, Version, str, dict[str, Any]]:
+    module_path = root / MODULE_FILE
+    state_path = root / STATE_RELATIVE
+    _require_go_module(module_path)
+    state = _load_state(state_path)
+    target = Version.parse(state["target_version"])
+    return module_path, state_path, target, _module_path(module_path), state
+
+
+def initialize(
+    root: Path, *, migration_approved: bool = False
+) -> dict[str, Any]:
+    module_path = root / MODULE_FILE
+    state_path = root / STATE_RELATIVE
+    if state_path.exists() or state_path.is_symlink():
+        _, _, current, _, state = _consistent_context(root)
+        return {
+            "action": "init",
+            "changed": False,
+            "current_version": str(current),
+            "state": str(STATE_RELATIVE),
+            "pending_change_count": len(state["pending_changes"]),
+            "migration": False,
+            "history_status": "preserved-existing-state",
+            "unrecoverable_history": [],
+        }
+    _require_go_module(module_path)
+    version = _declared_product_version(root)
+    migration = _is_independent_git_root(root)
+    if migration and not migration_approved:
+        raise GateError(
+            "version state is missing in an existing independent Git project; "
+            "rerun init with --migration-approved only after explicit user approval; "
+            "prior pending_changes, applied_bug_ids, and last_release history cannot be recovered"
+        )
+    if state_path.parent.exists() and state_path.parent.is_symlink():
+        raise GateError(f"refusing symlink state directory: {state_path.parent}")
+    state = _new_state(version)
+    _atomic_write(state_path, _state_json(state))
+    unrecoverable_history = (
+        ["pending_changes", "applied_bug_ids", "last_release"] if migration else []
+    )
+    return {
+        "action": "init",
+        "changed": True,
+        "current_version": str(version),
+        "state": str(STATE_RELATIVE),
+        "pending_change_count": 0,
+        "migration": migration,
+        "history_status": (
+            "unrecoverable-pre-migration-history"
+            if migration
+            else "new-project-empty-baseline"
+        ),
+        "unrecoverable_history": unrecoverable_history,
+    }
+
+def _existing_change(state: dict[str, Any], change_id: str) -> dict[str, Any] | None:
+    return next(
+        (item for item in state["pending_changes"] if item["change_id"] == change_id),
+        None,
+    )
+
+
+def _idempotent_result(required_version: str, reason: str) -> dict[str, Any]:
+    return {
+        "required_version": required_version,
+        "version_bumped": False,
+        "idempotent": True,
+        "reason": reason,
+    }
+
+
+def _transition(
+    state: dict[str, Any],
+    current: Version,
+    *,
+    kind: str,
+    change_id: str | None,
+    major: int | None,
+    user_approved: bool,
+) -> tuple[Version, dict[str, Any], dict[str, Any]]:
+    next_state = copy.deepcopy(state)
+    if kind == "maintenance":
+        return current, next_state, _idempotent_result(
+            str(current), "maintenance-does-not-change-version"
+        )
+    stable_id = _validate_change_id(change_id)
+    existing = _existing_change(state, stable_id)
+    if existing:
+        if existing["kind"] != kind:
+            raise GateError(
+                f"change_id {stable_id!r} is already used by kind {existing['kind']!r}"
+            )
+        return current, next_state, _idempotent_result(
+            existing["required_version"], "change-already-applied"
+        )
+    if stable_id in state["applied_bug_ids"]:
+        if kind != "bug-fix":
+            raise GateError(
+                f"change_id {stable_id!r} is already used by kind 'bug-fix'"
+            )
+        return current, next_state, _idempotent_result(
+            str(current), "bug-id-already-consumed"
+        )
+
+    next_version = current
+    reason: str
+    if kind == "feature":
+        if state["feature_bump_applied"]:
+            reason = "feature-bump-already-applied-in-release-cycle"
+        else:
+            next_version = current.bump_minor()
+            next_state["feature_bump_applied"] = True
+            reason = "first-feature-in-release-cycle"
+    elif kind == "bug-fix":
+        next_version = current.bump_patch()
+        next_state["applied_bug_ids"].append(stable_id)
+        reason = "distinct-completed-bug-fix"
+    elif kind == "major":
+        if not user_approved:
+            raise GateError("Major change requires explicit --user-approved")
+        if major is None or not 0 <= major <= SEMVER_COMPONENT_MAX:
+            raise GateError("approved Major must be inside uint64 range")
+        if major <= current.normalized().major:
+            raise GateError("approved Major must be greater than the current Major")
+        next_version = Version(major, 0, 0)
+        next_state["feature_bump_applied"] = True
+        reason = "explicit-user-approved-major"
+    else:
+        raise GateError(f"unsupported change kind: {kind}")
+
+    next_state["target_version"] = str(next_version)
+    next_state["pending_changes"].append(
+        {
+            "change_id": stable_id,
+            "kind": kind,
+            "required_version": str(next_version),
+        }
+    )
+    return next_version, next_state, {
+        "required_version": str(next_version),
+        "version_bumped": next_version != current,
+        "idempotent": False,
+        "reason": reason,
+    }
+
+
+def evaluate_change(
+    root: Path,
+    *,
+    action: str,
+    kind: str,
+    change_id: str | None,
+    major: int | None,
+    user_approved: bool,
+) -> dict[str, Any]:
+    _, state_path, current, _, state = _consistent_context(root)
+    next_version, next_state, result = _transition(
+        state,
+        current,
+        kind=kind,
+        change_id=change_id,
+        major=major,
+        user_approved=user_approved,
+    )
+    changed = next_state != state or next_version != current
+    if action == "apply" and changed:
+        _atomic_write(state_path, _state_json(next_state))
+    return {
+        "action": action,
+        "kind": kind,
+        "change_id": change_id,
+        "before_version": str(current),
+        "after_version": str(next_version),
+        "changed": bool(action == "apply" and changed),
+        "pending_change_count": len(next_state["pending_changes"]),
+        **result,
+    }
+
+def check(root: Path, phase: str) -> dict[str, Any]:
+    _, _, current, _, state = _consistent_context(root)
+    return {
+        "action": "check",
+        "phase": phase,
+        "current_version": str(current),
+        "cycle_base_version": state["cycle_base_version"],
+        "feature_bump_applied": state["feature_bump_applied"],
+        "pending_change_count": len(state["pending_changes"]),
+        "passed": True,
+    }
+
+
+def finalize_release(
+    root: Path, released_version: str, source_commit: str
+) -> dict[str, Any]:
+    _, state_path, current, _, state = _consistent_context(root)
+    released = Version.parse(released_version)
+    if released != current:
+        raise GateError(
+            f"released version {released} does not equal current target {current}"
+        )
+    if not SOURCE_COMMIT_PATTERN.fullmatch(source_commit):
+        raise GateError("source_commit must be exactly 40 hexadecimal characters")
+    next_state = copy.deepcopy(state)
+    next_state["cycle_base_version"] = str(released)
+    next_state["feature_bump_applied"] = False
+    next_state["pending_changes"] = []
+    next_state["last_release"] = {
+        "source_commit": source_commit.lower(),
+        "version": str(released),
+    }
+    _atomic_write(state_path, _state_json(next_state))
+    return {
+        "action": "finalize-release",
+        "changed": next_state != state,
+        "released_version": str(released),
+        "source_commit": source_commit.lower(),
+        "retained_bug_id_count": len(next_state["applied_bug_ids"]),
+        "pending_change_count": 0,
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    init_parser = subparsers.add_parser("init")
+    init_parser.add_argument("--project-root", required=True)
+    init_parser.add_argument("--migration-approved", action="store_true")
+    for command in ("plan", "apply"):
+        change_parser = subparsers.add_parser(command)
+        change_parser.add_argument("--project-root", required=True)
+        change_parser.add_argument("--kind", choices=KINDS, required=True)
+        change_parser.add_argument("--change-id")
+        change_parser.add_argument("--major", type=int)
+        change_parser.add_argument("--user-approved", action="store_true")
+    check_parser = subparsers.add_parser("check")
+    check_parser.add_argument("--project-root", required=True)
+    check_parser.add_argument(
+        "--phase", choices=("development", "build", "release"), required=True
+    )
+    release_parser = subparsers.add_parser("finalize-release")
+    release_parser.add_argument("--project-root", required=True)
+    release_parser.add_argument("--released-version", required=True)
+    release_parser.add_argument("--source-commit", required=True)
+    release_parser.add_argument("--release-succeeded", action="store_true", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        root = (
+            _initialization_root(args.project_root)
+            if args.command == "init"
+            else _project_root(args.project_root)
+        )
+        if args.command == "init":
+            result = initialize(root, migration_approved=args.migration_approved)
+        elif args.command in {"plan", "apply"}:
+            result = evaluate_change(
+                root,
+                action=args.command,
+                kind=args.kind,
+                change_id=args.change_id,
+                major=args.major,
+                user_approved=args.user_approved,
+            )
+        elif args.command == "check":
+            result = check(root, args.phase)
+        else:
+            result = finalize_release(root, args.released_version, args.source_commit)
+    except (GateError, OSError) as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

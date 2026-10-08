@@ -1,0 +1,110 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "中性 Go 服务脚手架，仅提供健康检查与统一响应体契约。",
+        "title": "示例服务 API",
+        "contact": {},
+        "version": "0.1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/v1/system/health-check": {
+            "get": {
+                "description": "返回服务名称、版本与当前运行环境，用于确认实例可用性。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "运行信息",
+                "responses": {
+                    "200": {
+                        "description": "统一响应体",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/project_id_internal_pkg_response.Body"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_api_v1.HealthCheckResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "description": "返回纯文本 ok，不经过统一响应体，供容器与负载均衡直接消费。",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "存活探针",
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "internal_api_v1.HealthCheckResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available 表示服务当前可用。",
+                    "type": "boolean"
+                },
+                "env": {
+                    "description": "Env 是运行环境名。",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name 是应用名称。",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version 是应用版本。",
+                    "type": "string"
+                }
+            }
+        },
+        "project_id_internal_pkg_response.Body": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "description": "Data 是单对象载荷。"
+                },
+                "model": {
+                    "description": "Model 是响应体形状标识。",
+                    "type": "string"
+                },
+                "request_id": {
+                    "description": "RequestID 是当前请求的追踪标识。",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

@@ -1,0 +1,150 @@
+# 基线配置：所有环境共享。环境专属差异放在 configs/config-{env}.yaml。
+app:
+  # 应用名称，身份重置时应改为目标项目英文展示名称。
+  name: project_id
+  # 应用版本，与 .harness/version-state.json 保持一致。
+  version: 0.1.0
+  # 运行环境名，可被 APP_ENV 覆盖。
+  env: dev
+  # 雪花节点号，-1 表示按主机名自动推导。
+  node_id: -1
+
+server:
+  # 监听地址。
+  host: 0.0.0.0
+  # 监听端口。
+  port: 8080
+  # 运行模式：debug、release 或 test。
+  mode: debug
+  # 读取请求超时。
+  read_timeout: 15s
+  # 写出响应超时。
+  write_timeout: 15s
+  # 空闲连接超时。
+  idle_timeout: 60s
+  # 优雅关闭超时。
+  shutdown_timeout: 10s
+
+database:
+  # 驱动名：sqlite、mysql 或 postgres。
+  driver: sqlite
+  # 数据源连接串；MySQL 必须包含 parsetime=true。
+  dsn: data/app.db
+  # 空闲连接数上界。
+  max_idle_conns: 10
+  # 打开连接数上界。
+  max_open_conns: 100
+  # 单个连接最长存活时间。
+  conn_max_lifetime: 1h
+  # 数据库日志级别：silent、error、warn 或 info。
+  log_level: warn
+  # 启动时是否自动迁移表结构。
+  auto_migrate: true
+
+jwt:
+  # 签名密钥，生产环境必须替换且不少于 16 个字符。
+  secret: change-me-in-production-please
+  # 签发方标识。
+  issuer: project_id
+  # 访问令牌有效期。
+  access_ttl: 1h
+  # 刷新令牌有效期。
+  refresh_ttl: 168h
+
+i18n:
+  # 是否启用语言协商中间件。
+  enabled: true
+  # 回退语言。
+  fallback: zh-CN
+  # 受支持语言列表。
+  support:
+    - zh-CN
+    - en-US
+  # 首选语言请求头。
+  header: Accept-Language
+  # 备选语言请求头。
+  alt_header: X-Language
+  # 语言查询参数名。
+  query: lang
+
+graphql:
+  # 是否挂载 GraphQL 查询层端点。基线不含 GraphQL 模块，本开关只在启用
+  # GraphQL 条件资产后生效；未启用时该值没有读取方，不产生副作用。
+  enabled: false
+  # 端点路径，必须以 / 开头。
+  path: /graphql
+  # 是否挂载浏览器调试 IDE（GraphiQL）；生产应关闭。
+  playground: false
+  # 是否允许 introspection 查询；生产应关闭。
+  introspection: false
+
+log:
+  # 日志级别。
+  level: info
+  # 日志格式。
+  format: text
+  # 主日志文件；留空表示输出到标准输出。
+  output: ""
+  # 错误日志文件；留空表示不额外拆分。
+  error_output: ""
+  # 单个日志文件大小上限，单位 MB。
+  max_size: 64
+  # 保留的历史日志文件数量。
+  max_backups: 10
+  # 历史日志最长保留天数。
+  max_age: 30
+  # 是否压缩历史日志。
+  compress: true
+  # 是否记录请求体。
+  log_body: false
+  # 是否记录请求头。
+  log_header: false
+  # 记录的请求体最大字节数。
+  body_limit: 4096
+  # 需要脱敏的字段名。
+  sensitive_keys:
+    - password
+    - token
+    - secret
+    - authorization
+  # 不记录访问日志的路径前缀。
+  skip_paths:
+    - /healthz
+    - /favicon.ico
+
+rate_limit:
+  # 是否启用限流中间件。
+  enabled: false
+  # 每秒允许的请求数。
+  rps: 20
+  # 允许的瞬时突发请求数。
+  burst: 40
+
+cors:
+  # 是否启用跨域中间件。
+  enabled: false
+  # 允许的来源列表。
+  allow_origins: []
+  # 允许的请求方法。
+  allow_methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+    - OPTIONS
+  # 允许的请求头。
+  allow_headers:
+    - Origin
+    - Content-Type
+    - Accept
+    - Authorization
+  # 允许暴露的响应头。
+  expose_headers:
+    - X-Request-Id
+  # 是否允许携带凭据；为 true 时不得使用通配符来源。
+  allow_credentials: false
+  # 预检结果缓存秒数。
+  max_age: 600
+  # 是否以通配符放行全部来源。
+  use_wildcard: false

@@ -1,0 +1,4 @@
+interface:
+  display_name: "初始化 Go 项目"
+  short_description: "只解析 Harness 所需初始化选择并建立中性 Go 服务下游；写入前由环境门禁检查 Git 与 Go 工具链，仓库边界、local 身份与模板只在真实基线提交前设置"
+  default_prompt: "使用 $go-initialize-go-project，只解析创建中性 Go 服务下游所需的固定初始化信息；接口固定为 HTTP API，不提供 CLI、TUI、MCP 或 GUI。写入前先调用 $go-check-development-environment 门禁 Git 与 Go 工具链，再复制中性骨架并在脚手架检查通过后建立独立仓库与 local 身份。"

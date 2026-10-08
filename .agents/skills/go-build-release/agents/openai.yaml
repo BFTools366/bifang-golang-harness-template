@@ -1,0 +1,4 @@
+interface:
+  display_name: "构建 Go 发布候选"
+  short_description: "仅从 clean HEAD 交叉构建并暂存可审计的 Go 发布候选"
+  default_prompt: "使用 $go-build-release 构建明确请求的发布候选；普通构建不自动提交，dirty 时停止，按 GOOS × GOARCH 交叉编译并确保 manifest sourceCommit 等于 HEAD。"

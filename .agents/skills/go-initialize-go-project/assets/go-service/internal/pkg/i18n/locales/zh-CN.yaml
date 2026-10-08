@@ -1,0 +1,47 @@
+# 中文错误词条。键名即 apperr 中的稳定错误码。
+common.bad.request: 请求参数不合法
+common.unauthorized: 请先登录
+common.forbidden: 没有权限执行该操作
+common.not.found: 目标资源不存在
+common.conflict: 目标资源存在冲突
+common.unprocessable: 请求无法被业务规则接受
+common.too.many.requests: 请求过于频繁，请稍后再试
+common.internal.error: 服务内部错误
+common.route.not.found: 请求的接口不存在
+common.method.not.allowed: 请求方法不被支持
+common.unsupported.media.type: 请求内容类型不受支持
+common.payload.too.large: 请求内容过大
+
+auth.token.missing: 缺少访问令牌
+auth.token.invalid: 访问令牌不合法
+auth.token.expired: 访问令牌已过期
+auth.token.revoked: 访问令牌已被撤销
+auth.token.malformed: 访问令牌格式无法解析
+auth.token.wrong.type: 访问令牌类型不正确
+auth.token.sign.failed: 访问令牌签发失败
+auth.refresh.invalid: 刷新令牌不合法
+auth.refresh.expired: 刷新令牌已过期
+auth.credentials.invalid: 账号或凭据不正确
+auth.account.disabled: 账号已被禁用
+auth.signing.key.missing: 服务端签发密钥缺失
+auth.issuer.mismatch: 令牌签发方与当前服务不一致
+
+account.not.found: 账号不存在
+account.exists: 账号已存在
+account.password.weak: 口令强度不足
+account.password.mismatch: 原口令校验失败
+account.username.taken: 用户名已被占用
+account.profile.locked: 账号资料当前不可修改
+
+org.not.found: 组织不存在
+org.member.exists: 成员已在组织中
+
+validate.required: 该字段为必填项
+validate.username: 用户名格式不合法
+validate.password: 口令格式不合法
+validate.email: 邮箱格式不合法
+validate.length: 字段长度不合法
+validate.format: 字段格式不合法
+validate.number: 字段必须为数字
+validate.url: 字段必须为合法链接
+validate.oneof: 字段取值不在允许范围内

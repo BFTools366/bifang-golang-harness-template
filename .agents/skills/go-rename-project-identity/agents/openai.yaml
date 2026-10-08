@@ -1,0 +1,4 @@
+interface:
+  display_name: "重命名项目身份"
+  short_description: "在配置、Skills、Go module 路径、文档和两种语言的许可证中安全重命名此项目的中英文身份"
+  default_prompt: "使用 $go-rename-project-identity，在配置、Skills、Go module 路径、文档和两种语言的许可证中安全重命名此项目的中英文身份；先预览计划，再按路径深度从深到浅应用并复验构建与测试。"

@@ -1,0 +1,34 @@
+# gqlgen 代码生成配置。
+#
+# 生成命令：go run github.com/99designs/gqlgen generate
+#
+# 修改 internal/graphql/schema.graphqls 后**必须**重新生成 —— gqlgen 生成的是
+# 强类型代码，schema 与生成结果不一致会直接在编译期报错（这正是选它的主要理由）。
+#
+# 本仓库没有 Makefile：生成入口就是上面那条 go run，不依赖任何构建脚本。
+schema:
+  - internal/graphql/schema.graphqls
+
+exec:
+  filename: internal/graphql/generated.go
+  package: graphql
+
+model:
+  filename: internal/graphql/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: internal/graphql
+  package: graphql
+  filename_template: "{name}.resolvers.go"
+
+# 自定义标量的 Go 类型映射。
+#
+# Time 绑定到本目录自建的 scalar.Time，而不是标准库 time.Time：
+# gqlgen 通过「类型是否实现 MarshalGQL / UnmarshalGQL」识别自定义标量的
+# 编解码方式，time.Time 两个方法都没有，直接绑定会被当成普通结构体逐字段序列化。
+models:
+  Time:
+    model:
+      - project_id/internal/graphql/scalar.Time

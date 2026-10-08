@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go 初始化 E2E"
+  short_description: "在 Go 下游初始化提交前按已确认的接口与平台事实验证脚手架契约、真实进程启动、HTTP API 接口、统一响应体、中间件顺序和身份重置"
+  default_prompt: "使用 $go-test-initialization-e2e，在创建唯一基线提交前固定执行一次初始化 E2E：先运行结构契约检查器验证共享核心、中间件顺序、五种统一响应体、i18n 词条覆盖与接口事实一致性，再用真实调试二进制验证 HTTP 契约。"

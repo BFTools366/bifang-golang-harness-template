@@ -1,0 +1,30 @@
+# 开发环境配置：深合并到 configs/config.yaml 之上。
+database:
+  # 开发环境使用本地 sqlite 文件。
+  driver: sqlite
+  dsn: data/app.db
+  log_level: info
+
+log:
+  # 开发环境输出更详细的日志，并记录请求头与请求体。
+  level: debug
+  log_body: true
+  log_header: true
+
+cors:
+  # 开发环境放行本地前端调试来源。
+  enabled: true
+  allow_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+  allow_credentials: true
+
+rate_limit:
+  # 开发环境不启用限流。
+  enabled: false
+
+graphql:
+  # 开发环境打开调试 IDE（浏览器访问 GET /graphql）与 introspection。
+  # 仅在启用 GraphQL 条件资产后生效。
+  playground: true
+  introspection: true
